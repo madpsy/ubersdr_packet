@@ -1,0 +1,36 @@
+services:
+  ubersdr-packet:
+    image: madpsy/ubersdr-packet:latest
+    container_name: ubersdr-packet
+    restart: unless-stopped
+    init: true
+    shm_size: '256m'
+    cpu_shares: 512
+    environment:
+      # Required: UberSDR WebSocket URL
+      UBERSDR_URL: "ws://ubersdr:8080/ws"
+      #
+      # Channels are managed via the web UI and persisted to /data/channels.json.
+      #
+      # Uncomment and set as needed:
+      # UBERSDR_PASS: ""
+      # UI_PASSWORD: ""          # Set to enable password-protected write actions in the web UI
+      # WEB_PORT: "6096"
+      # REPLAY_BUF_SIZE: "200"   # Recent AX.25 frames replayed to late-joining browsers (0 to disable)
+    ports:
+      - "6096:6096"
+    networks:
+      - sdr-network
+    volumes:
+      - ./data:/data
+    logging:
+      driver: "fluentd"
+      options:
+        fluentd-address: "127.0.0.1:24224"
+        fluentd-async: "true"
+        tag: "ubersdr-packet"
+
+networks:
+  sdr-network:
+    external: true
+    name: ubersdr_sdr-network

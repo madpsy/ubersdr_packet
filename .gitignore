@@ -1,0 +1,12 @@
+# Compiled binaries
+ubersdr-packet
+
+# Go build cache
+*.test
+*.out
+
+# Data directory (runtime state)
+data/
+
+# OS
+.DS_Store
