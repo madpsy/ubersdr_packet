@@ -722,7 +722,7 @@ function getState(id) {
       frames:        [],
       dcd:           [false, false, false, false],
       dcdTimers:     [null, null, null, null],
-      filter:        { type: 'all', smCh: 'all', from: '', to: '', maxFrames: 100 },
+      filter:        { type: 'all', smCh: 'all', from: '', to: '', search: '', maxFrames: 100 },
       lastFrameTime: null,
       lastCallsign:  null,
       agoTimer:      null,
@@ -901,16 +901,6 @@ function renderChannelCard(ch) {
   });
   selSmCh.addEventListener('change', () => { state.filter.smCh = selSmCh.value; renderFrames(); });
 
-  // Sender dropdown (populated dynamically)
-  const selFrom = document.createElement('select');
-  selFrom.appendChild(Object.assign(document.createElement('option'), { value: '', textContent: 'From: All' }));
-  selFrom.addEventListener('change', () => { state.filter.from = selFrom.value; renderFrames(); });
-
-  // Destination dropdown (populated dynamically)
-  const selTo = document.createElement('select');
-  selTo.appendChild(Object.assign(document.createElement('option'), { value: '', textContent: 'To: All' }));
-  selTo.addEventListener('change', () => { state.filter.to = selTo.value; renderFrames(); });
-
   // Max frames
   const selMax = document.createElement('select');
   [[10,'10'],[25,'25'],[50,'50'],[100,'100'],[250,'250'],[500,'500'],[0,'∞']].forEach(([v,t]) => {
@@ -921,34 +911,67 @@ function renderChannelCard(ch) {
   selMax.addEventListener('change', () => { state.filter.maxFrames = parseInt(selMax.value) || 0; renderFrames(); });
 
   const btnClear = el('button', 'btn btn-secondary btn-sm', 'Clear');
-  btnClear.addEventListener('click', () => {
-    state.frames = [];
-    // Reset dropdowns
-    while (selFrom.options.length > 1) selFrom.remove(1);
-    while (selTo.options.length > 1) selTo.remove(1);
-    state.filter.from = ''; state.filter.to = '';
-    selFrom.value = ''; selTo.value = '';
-    // Reset last-callsign stats
-    state.lastFrameTime = null;
-    state.lastCallsign  = null;
-    statsLastCall.textContent = '---';
-    stopAgoTimer();
-    renderFrames();
-  });
-
   const countEl = el('span', 'frame-count', '0 frames');
 
   toolbar.appendChild(el('label', 'text-dim', 'Type:'));
   toolbar.appendChild(selType);
   toolbar.appendChild(el('label', 'text-dim', 'Ch:'));
   toolbar.appendChild(selSmCh);
-  toolbar.appendChild(selFrom);
-  toolbar.appendChild(selTo);
   toolbar.appendChild(el('label', 'text-dim', 'Max:'));
   toolbar.appendChild(selMax);
   toolbar.appendChild(btnClear);
   toolbar.appendChild(countEl);
   framesPane.appendChild(toolbar);
+
+  // ── Search bar (Sender dropdown, Destination dropdown, text search) ──
+  const searchBar = el('div', 'frames-search-bar');
+
+  // Sender dropdown (populated dynamically)
+  const selFrom = document.createElement('select');
+  selFrom.className = 'search-bar-select';
+  selFrom.title = 'Filter by sender';
+  selFrom.appendChild(Object.assign(document.createElement('option'), { value: '', textContent: 'Sender' }));
+  selFrom.addEventListener('change', () => { state.filter.from = selFrom.value; renderFrames(); });
+
+  // Destination dropdown (populated dynamically)
+  const selTo = document.createElement('select');
+  selTo.className = 'search-bar-select';
+  selTo.title = 'Filter by destination';
+  selTo.appendChild(Object.assign(document.createElement('option'), { value: '', textContent: 'Destination' }));
+  selTo.addEventListener('change', () => { state.filter.to = selTo.value; renderFrames(); });
+
+  // Text search input
+  const searchIcon = el('span', 'search-icon', '🔍');
+  const searchInput = document.createElement('input');
+  searchInput.type = 'text';
+  searchInput.className = 'search-input';
+  searchInput.placeholder = 'Filter by content…';
+  searchInput.autocomplete = 'off';
+  searchInput.spellcheck = false;
+  searchInput.addEventListener('input', () => {
+    state.filter.search = searchInput.value.trim().toLowerCase();
+    renderFrames();
+  });
+
+  // Clear search button
+  const btnSearchClear = el('button', 'btn-search-clear', '✕');
+  btnSearchClear.title = 'Clear filter';
+  btnSearchClear.addEventListener('click', () => {
+    state.filter.from = '';
+    state.filter.to = '';
+    state.filter.search = '';
+    selFrom.value = '';
+    selTo.value = '';
+    searchInput.value = '';
+    renderFrames();
+  });
+
+  searchBar.appendChild(selFrom);
+  searchBar.appendChild(selTo);
+  searchBar.appendChild(searchIcon);
+  searchBar.appendChild(searchInput);
+  searchBar.appendChild(btnSearchClear);
+  framesPane.appendChild(searchBar);
 
   // ── Stats bar (Frames count + Last callsign / time ago) ──
   const statsBar = el('div', 'frames-stats-bar');
@@ -978,6 +1001,24 @@ function renderChannelCard(ch) {
     if (state.agoTimer) { clearInterval(state.agoTimer); state.agoTimer = null; }
     statsLastAgo.textContent = '';
   }
+
+  // Wire up Clear button now that all elements are in scope
+  btnClear.addEventListener('click', () => {
+    state.frames = [];
+    state.filter.from = ''; state.filter.to = ''; state.filter.search = '';
+    // Reset sender/dest dropdowns
+    seenFrom.clear(); seenTo.clear();
+    while (selFrom.options.length > 1) selFrom.remove(1);
+    while (selTo.options.length > 1) selTo.remove(1);
+    selFrom.value = ''; selTo.value = '';
+    searchInput.value = '';
+    // Reset last-callsign stats
+    state.lastFrameTime = null;
+    state.lastCallsign  = null;
+    statsLastCall.textContent = '---';
+    stopAgoTimer();
+    renderFrames();
+  });
 
   const framesList = el('div', 'frames-list');
   framesPane.appendChild(framesList);
@@ -1025,6 +1066,19 @@ function renderChannelCard(ch) {
     if (f.type  && f.type !== 'all') rows = rows.filter(r => frameMatchesType(r, f.type));
     if (f.from) rows = rows.filter(r => (r.from || '').toLowerCase() === f.from.toLowerCase());
     if (f.to)   rows = rows.filter(r => (r.to   || '').toLowerCase() === f.to.toLowerCase());
+    if (f.search) {
+      const q = f.search;
+      rows = rows.filter(r => {
+        const p = r.parsed || {};
+        const haystack = [
+          r.from || '', r.to || '',
+          (p.info || r.raw || ''),
+          (p.comment || ''), (p.dest || ''),
+          ...(p.digipeaters || []),
+        ].join(' ').toLowerCase();
+        return haystack.includes(q);
+      });
+    }
     if (f.maxFrames > 0) rows = rows.slice(-f.maxFrames);
     countEl.textContent = state.frames.length + ' frames';
     statsFrames.textContent = state.frames.length + ' frames';
