@@ -77,6 +77,7 @@ const state = {
   authed: false,
   passwordConfigured: false,
   mqttConfigured: false,
+  mqttTopicPrefix: 'packet', // global default; overwritten by /api/config
 };
 
 // ---------------------------------------------------------------------------
@@ -354,6 +355,28 @@ function initAddPanel() {
     });
   }
 
+  // Split MQTT topic field: read-only prefix badge + editable suffix input.
+  // The badge shows the global prefix (e.g. "packet/") from the server config.
+  // The suffix auto-populates from the channel name/label as the user types,
+  // unless they've manually edited it.
+  const mqttSuffixEl = document.getElementById('add-mqtt-suffix');
+  const mqttBadgeEl  = document.getElementById('add-mqtt-prefix-badge');
+  let mqttSuffixManual = false;
+  if (mqttSuffixEl) {
+    mqttSuffixEl.addEventListener('input', () => { mqttSuffixManual = true; });
+    const syncMqttSuffix = () => {
+      if (mqttSuffixManual) return;
+      const nameVal = (document.getElementById('add-name').value || '').trim();
+      const freqVal = document.getElementById('add-freq').value || '';
+      const modeVal = (document.getElementById('add-mode') || {}).value || '';
+      mqttSuffixEl.value = nameVal || (freqVal && modeVal ? freqVal + '_' + modeVal : freqVal);
+    };
+    document.getElementById('add-name').addEventListener('input', syncMqttSuffix);
+    document.getElementById('add-freq').addEventListener('input', syncMqttSuffix);
+    const modeEl = document.getElementById('add-mode');
+    if (modeEl) modeEl.addEventListener('change', syncMqttSuffix);
+  }
+
   btnOpen.addEventListener('click', () => {
     // Reset preset selector when opening
     if (presetSel) presetSel.value = '';
@@ -368,14 +391,14 @@ function initAddPanel() {
     if (!freqHz || freqHz <= 0) { alert('Enter a valid frequency in Hz'); return; }
 
     const modemChannels = readModemChannels(grid);
+    const pfx = state.mqttTopicPrefix || 'packet';
+    const sfx = mqttSuffixEl ? mqttSuffixEl.value.trim() : '';
     const body = {
       freq_hz:           freqHz,
       mode:              document.getElementById('add-mode').value,
       name:              document.getElementById('add-name').value.trim(),
       bandwidth_hz:      parseInt(document.getElementById('add-bw').value) || 0,
-      mqtt_topic_prefix: state.mqttConfigured
-        ? (document.getElementById('add-mqtt-prefix').value.trim())
-        : '',
+      mqtt_topic_prefix: state.mqttConfigured && sfx ? pfx + '/' + sfx : '',
       modem_config: {
         sample_rate:   0,
         dcd_threshold: 20,
@@ -399,8 +422,7 @@ function initAddPanel() {
       document.getElementById('add-freq').value = '';
       document.getElementById('add-name').value = '';
       document.getElementById('add-bw').value = '0';
-      const mqttPrefixEl = document.getElementById('add-mqtt-prefix');
-      if (mqttPrefixEl) mqttPrefixEl.value = '';
+      if (mqttSuffixEl) { mqttSuffixEl.value = ''; mqttSuffixManual = false; }
       loadChannels();
     } catch (e) {
       alert('Error: ' + e.message);
@@ -1295,15 +1317,30 @@ function renderChannelCard(ch) {
   const smChannels = smCfg.channels || [{}, {}, {}, {}];
   for (let i = 0; i < 4; i++) cfgGrid.appendChild(buildModemChannelCard(i, smChannels[i]));
 
-  // MQTT prefix row — always rendered; CSS hides it unless body.mqtt-enabled
+  // MQTT topic row — always rendered; CSS hides it unless body.mqtt-enabled.
+  // Split into read-only prefix badge + editable suffix so the full topic path
+  // is always visible: [packet/] [mychannel]
+  const globalPfx = state.mqttTopicPrefix || 'packet';
+  // Decompose stored full topic into prefix + suffix for display.
+  // If the stored value starts with the global prefix, show just the suffix;
+  // otherwise show the whole stored value in the suffix field.
+  let initSuffix = ch.label; // default suffix = channel label
+  if (ch.mqtt_topic_prefix) {
+    const sep = ch.mqtt_topic_prefix.indexOf('/');
+    initSuffix = sep >= 0 ? ch.mqtt_topic_prefix.slice(sep + 1) : ch.mqtt_topic_prefix;
+  }
   const mqttRow = el('div', 'mqtt-prefix-row');
-  const mqttLabel = el('label', '', '📡 MQTT Topic Prefix');
-  const mqttPrefixInput = document.createElement('input');
-  mqttPrefixInput.type = 'text';
-  mqttPrefixInput.className = 'mqtt-prefix-input';
-  mqttPrefixInput.placeholder = 'e.g. packet/rx';
-  mqttPrefixInput.value = ch.mqtt_topic_prefix || '';
-  mqttLabel.appendChild(mqttPrefixInput);
+  const mqttLabel = el('label', '', '📡 MQTT Topic');
+  const mqttTopicField = el('div', 'mqtt-topic-field');
+  const mqttPrefixBadge = el('span', 'mqtt-topic-prefix-badge', globalPfx + '/');
+  const mqttSuffixInput = document.createElement('input');
+  mqttSuffixInput.type = 'text';
+  mqttSuffixInput.className = 'mqtt-prefix-input';
+  mqttSuffixInput.placeholder = ch.label;
+  mqttSuffixInput.value = initSuffix;
+  mqttTopicField.appendChild(mqttPrefixBadge);
+  mqttTopicField.appendChild(mqttSuffixInput);
+  mqttLabel.appendChild(mqttTopicField);
   mqttRow.appendChild(mqttLabel);
   cfgPane.appendChild(mqttRow);
 
@@ -1326,7 +1363,8 @@ function renderChannelCard(ch) {
       mode:          modeSelect.value,
       bandwidth_hz:  parseInt(bwInput.value) || 0,
     };
-    patchBody.mqtt_topic_prefix = mqttPrefixInput.value.trim();
+    const sfx = mqttSuffixInput.value.trim();
+    patchBody.mqtt_topic_prefix = sfx ? globalPfx + '/' + sfx : '';
     const resp = await fetch(BASE + '/api/channels/' + encodeURIComponent(ch.label), {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -1637,12 +1675,16 @@ async function loadConfig() {
     if (!resp.ok) return;
     const cfg = await resp.json();
     state.mqttConfigured = !!cfg.mqtt_configured;
+    state.mqttTopicPrefix = cfg.mqtt_topic_prefix || 'packet';
     // Body class drives CSS visibility of all MQTT rows (add-channel form
     // and per-channel config panes) without needing to re-render cards.
     document.body.classList.toggle('mqtt-enabled', state.mqttConfigured);
     // Show/hide MQTT topic prefix row in the add-channel form
     const row = document.getElementById('add-mqtt-prefix-row');
     if (row) row.classList.toggle('hidden', !state.mqttConfigured);
+    // Update the add-panel prefix badge to show the real configured prefix.
+    const badge = document.getElementById('add-mqtt-prefix-badge');
+    if (badge) badge.textContent = state.mqttTopicPrefix + '/';
   } catch (e) {
     console.warn('loadConfig:', e);
   }

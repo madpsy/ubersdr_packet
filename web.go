@@ -197,7 +197,7 @@ func requiresAuth(w http.ResponseWriter, r *http.Request, uiPassword string, ses
 // HTTP server
 // ---------------------------------------------------------------------------
 
-func startHTTPServer(listenAddr string, mgr *channelManager, hub *sseHub, uiPassword string, mqttConfigured bool) error {
+func startHTTPServer(listenAddr string, mgr *channelManager, hub *sseHub, uiPassword string, mqttConfigured bool, mqttTopicPrefix string) error {
 	sessions := newSessionStore()
 	mux := http.NewServeMux()
 
@@ -287,7 +287,8 @@ func startHTTPServer(listenAddr string, mgr *channelManager, hub *sseHub, uiPass
 			return
 		}
 		writeJSON(w, map[string]interface{}{
-			"mqtt_configured": mqttConfigured,
+			"mqtt_configured":   mqttConfigured,
+			"mqtt_topic_prefix": mqttTopicPrefix,
 		})
 	})
 

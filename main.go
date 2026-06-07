@@ -127,7 +127,9 @@ func (pc *packetChannel) tapBroadcast(pcmBytes []byte) {
 }
 
 // start launches the UberSDR connection and the QtSoundModem decoder.
-func (pc *packetChannel) start(ctx context.Context, hub *sseHub, mq *mqttClient) error {
+// defaultPrefix is the global MQTT topic prefix used when the channel has no
+// per-channel prefix set.
+func (pc *packetChannel) start(ctx context.Context, hub *sseHub, mq *mqttClient, defaultPrefix string) error {
 	// startModem creates a fresh SoundModemDecoder and starts it.
 	// Returns the decoder so the caller can watch its CrashChan.
 	startModem := func() (*SoundModemDecoder, error) {
@@ -167,10 +169,20 @@ func (pc *packetChannel) start(ctx context.Context, hub *sseHub, mq *mqttClient)
 					return
 				}
 				hub.broadcast(pc.channelID, frame)
-				// Publish raw KISS frame to MQTT if a topic prefix is set.
-				if mq != nil && pc.mqttTopicPrefix != "" {
-					topic := pc.mqttTopicPrefix + "/" + pc.label
-					mq.Publish(topic, frame)
+				// Publish raw KISS frame to MQTT.
+				// Use per-channel prefix if set, otherwise fall back to the
+				// global default prefix supplied via -mqtt-topic-prefix flag.
+				if mq != nil {
+					pc.mu.Lock()
+					prefix := pc.mqttTopicPrefix
+					pc.mu.Unlock()
+					if prefix == "" {
+						prefix = defaultPrefix
+					}
+					if prefix != "" {
+						topic := prefix + "/" + pc.label
+						mq.Publish(topic, frame)
+					}
 				}
 			case crashErr := <-decoder.CrashChan():
 				log.Printf("[%s] modem crashed: %v — restarting…", pc.label, crashErr)
@@ -298,25 +310,27 @@ func bytesToInt16(b []byte) []int16 {
 // ---------------------------------------------------------------------------
 
 type channelManager struct {
-	mu         sync.RWMutex
-	wg         sync.WaitGroup
-	channels   []*packetChannel
-	ubersdrURL string
-	password   string
-	hub        *sseHub
-	mq         *mqttClient
-	ctx        context.Context
-	configPath string
+	mu                sync.RWMutex
+	wg                sync.WaitGroup
+	channels          []*packetChannel
+	ubersdrURL        string
+	password          string
+	hub               *sseHub
+	mq                *mqttClient
+	mqttDefaultPrefix string // global fallback topic prefix (e.g. "packet")
+	ctx               context.Context
+	configPath        string
 }
 
-func newChannelManager(ctx context.Context, ubersdrURL, password string, hub *sseHub, mq *mqttClient, configPath string) *channelManager {
+func newChannelManager(ctx context.Context, ubersdrURL, password string, hub *sseHub, mq *mqttClient, mqttDefaultPrefix, configPath string) *channelManager {
 	return &channelManager{
-		ubersdrURL: ubersdrURL,
-		password:   password,
-		hub:        hub,
-		mq:         mq,
-		ctx:        ctx,
-		configPath: configPath,
+		ubersdrURL:        ubersdrURL,
+		password:          password,
+		hub:               hub,
+		mq:                mq,
+		mqttDefaultPrefix: mqttDefaultPrefix,
+		ctx:               ctx,
+		configPath:        configPath,
 	}
 }
 
@@ -343,7 +357,7 @@ func (m *channelManager) add(freqHz int, mode, name, channelID string, bwHz int,
 	inst := newInstance(freqHz, 0, mode, m.ubersdrURL, m.password, name, bwHz)
 	pc := newPacketChannel(inst, smCfg, channelID, mqttTopicPrefix, name)
 
-	if err := pc.start(m.ctx, m.hub, m.mq); err != nil {
+	if err := pc.start(m.ctx, m.hub, m.mq, m.mqttDefaultPrefix); err != nil {
 		return nil, fmt.Errorf("start channel: %w", err)
 	}
 
@@ -477,6 +491,7 @@ func main() {
 		mqttUser          = flag.String("mqtt-user", envOr("MQTT_USER", ""), "MQTT username (env: MQTT_USER)")
 		mqttPass          = flag.String("mqtt-pass", envOr("MQTT_PASS", ""), "MQTT password (env: MQTT_PASS)")
 		mqttTLSSkipVerify = flag.Bool("mqtt-tls-skip-verify", envOr("MQTT_TLS_SKIP_VERIFY", "") == "true", "Skip TLS certificate verification for MQTT (env: MQTT_TLS_SKIP_VERIFY)")
+		mqttTopicPrefix   = flag.String("mqtt-topic-prefix", envOr("MQTT_TOPIC_PREFIX", "packet"), "Default MQTT topic prefix; frames publish to <prefix>/<channel_label> (env: MQTT_TOPIC_PREFIX)")
 	)
 	flag.Parse()
 
@@ -518,11 +533,11 @@ func main() {
 	defer cancel()
 
 	mqttConfigured := *mqttBroker != ""
-	mgr := newChannelManager(ctx, *ubersdrURL, *password, hub, mq, configPath)
+	mgr := newChannelManager(ctx, *ubersdrURL, *password, hub, mq, *mqttTopicPrefix, configPath)
 	mgr.load()
 
 	go func() {
-		if err := startHTTPServer(*listenAddr, mgr, hub, *uiPassword, mqttConfigured); err != nil {
+		if err := startHTTPServer(*listenAddr, mgr, hub, *uiPassword, mqttConfigured, *mqttTopicPrefix); err != nil {
 			log.Fatalf("[main] HTTP server: %v", err)
 		}
 	}()

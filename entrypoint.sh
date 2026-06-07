@@ -16,6 +16,9 @@
 #   MQTT_PASS             MQTT password (optional)
 #   MQTT_TLS_SKIP_VERIFY  Set to "true" to skip TLS certificate verification
 #                         (useful for self-signed certificates)
+#   MQTT_TOPIC_PREFIX     Default MQTT topic prefix (default: "packet").
+#                         Frames publish to <prefix>/<channel_label>.
+#                         Per-channel overrides take precedence when set.
 
 set -e
 
@@ -32,6 +35,7 @@ if [ "$MQTT_ENABLED" = "true" ] && [ -n "$MQTT_BROKER" ]; then
     [ -n "$MQTT_USER" ] && args="$args -mqtt-user $MQTT_USER"
     [ -n "$MQTT_PASS" ] && args="$args -mqtt-pass $MQTT_PASS"
     [ "$MQTT_TLS_SKIP_VERIFY" = "true" ] && args="$args -mqtt-tls-skip-verify"
+    [ -n "$MQTT_TOPIC_PREFIX" ] && args="$args -mqtt-topic-prefix $MQTT_TOPIC_PREFIX"
 fi
 
 DATA_DIR="${DATA_DIR:-/data}"

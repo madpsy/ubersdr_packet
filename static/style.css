@@ -332,6 +332,37 @@ body.mqtt-enabled .mqtt-prefix-row {
   outline: none;
   border-color: var(--accent);
 }
+/* Split topic field: [prefix/] [suffix-input] */
+.mqtt-topic-field {
+  display: flex;
+  align-items: center;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.mqtt-topic-prefix-badge {
+  padding: 4px 6px;
+  background: var(--bg3);
+  color: var(--accent);
+  font-size: 12px;
+  font-family: monospace;
+  white-space: nowrap;
+  border-right: 1px solid var(--border);
+  user-select: none;
+}
+.mqtt-topic-field .mqtt-prefix-input {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  flex: 1;
+  min-width: 0;
+}
+.mqtt-topic-field .mqtt-prefix-input:focus {
+  outline: none;
+  border-color: transparent;
+  box-shadow: none;
+}
 
 .dcd-indicators {
   display: flex;

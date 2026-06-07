@@ -28,6 +28,8 @@ services:
       # MQTT_USER: ""
       # MQTT_PASS: ""
       # MQTT_TLS_SKIP_VERIFY: "false"   # set "true" to skip TLS cert verification
+      # MQTT_TOPIC_PREFIX: "packet"     # frames publish to <prefix>/<channel_label>
+      #                                 # per-channel overrides take precedence
     networks:
       - sdr-network
     volumes:

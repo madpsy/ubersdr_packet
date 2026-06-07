@@ -54,8 +54,11 @@
         <label>Bandwidth Hz (0=default)
           <input type="number" id="add-bw" value="0" min="0">
         </label>
-        <label id="add-mqtt-prefix-row" class="hidden">MQTT Topic Prefix
-          <input type="text" id="add-mqtt-prefix" placeholder="packet/rx">
+        <label id="add-mqtt-prefix-row" class="hidden">📡 MQTT Topic
+          <div class="mqtt-topic-field">
+            <span id="add-mqtt-prefix-badge" class="mqtt-topic-prefix-badge">packet/</span>
+            <input type="text" id="add-mqtt-suffix" placeholder="channel-name">
+          </div>
         </label>
       </div>
 
