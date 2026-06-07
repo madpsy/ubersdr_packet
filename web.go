@@ -3,16 +3,22 @@ package main
 
 import (
 	"crypto/rand"
+	"embed"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html/template"
+	"io/fs"
 	"log"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 )
+
+//go:embed static
+var staticFiles embed.FS
 
 // ---------------------------------------------------------------------------
 // SSE hub — fan-out with per-channel replay ring buffer
@@ -551,9 +557,40 @@ func startHTTPServer(listenAddr string, mgr *channelManager, hub *sseHub, uiPass
 	})
 
 	// -----------------------------------------------------------------------
-	// Static files
+	// Static files — index.html served as a Go template so BASE_PATH can be
+	// injected from the X-Forwarded-Prefix header set by UberSDR's addon proxy.
 	// -----------------------------------------------------------------------
-	mux.Handle("/", http.FileServer(http.Dir("static")))
+	indexTmpl, indexTmplErr := func() (*template.Template, error) {
+		data, err := staticFiles.ReadFile("static/index.html")
+		if err != nil {
+			return nil, err
+		}
+		return template.New("index").Parse(string(data))
+	}()
+
+	basePath := func(r *http.Request) string {
+		return strings.TrimRight(r.Header.Get("X-Forwarded-Prefix"), "/")
+	}
+
+	sub, err := fs.Sub(staticFiles, "static")
+	if err != nil {
+		return fmt.Errorf("embed sub: %w", err)
+	}
+	staticHandler := http.FileServer(http.FS(sub))
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+			if indexTmplErr != nil {
+				http.Error(w, "template error: "+indexTmplErr.Error(), http.StatusInternalServerError)
+				return
+			}
+			bp := basePath(r)
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			indexTmpl.Execute(w, map[string]string{"BasePath": bp}) //nolint:errcheck
+			return
+		}
+		staticHandler.ServeHTTP(w, r)
+	})
 
 	log.Printf("[web] listening on %s", listenAddr)
 	return http.ListenAndServe(listenAddr, mux)

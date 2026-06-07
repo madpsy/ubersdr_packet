@@ -1,6 +1,11 @@
 /* app.js — UberSDR Packet frontend */
 'use strict';
 
+// BASE_PATH is injected by the Go server from the X-Forwarded-Prefix header.
+// When served via UberSDR's addon proxy at /addon/packet/, this will be
+// "/addon/packet" so all API calls are correctly prefixed.
+const BASE = (window.BASE_PATH || '').replace(/\/$/, '');
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -111,23 +116,29 @@ function api(path, opts = {}) {
 // ---------------------------------------------------------------------------
 
 function renderAuthBar() {
-  const bar = document.getElementById('auth-bar');
-  const addBtn = document.getElementById('btn-add-channel');
+  const loginBtn   = document.getElementById('login-btn');
+  const authedSpan = document.getElementById('auth-authed');
+  const logoutBtn  = document.getElementById('logout-btn');
+  const addBtn     = document.getElementById('btn-add-channel');
 
   if (!state.passwordConfigured) {
-    bar.innerHTML = '';
+    // No password set — everyone can write
+    loginBtn.classList.add('hidden');
+    authedSpan.classList.add('hidden');
+    logoutBtn.classList.add('hidden');
     addBtn.classList.remove('hidden');
     return;
   }
 
   if (state.authed) {
-    bar.innerHTML = `<span class="auth-authed">Authenticated</span>
-      <button id="logout-btn" class="btn btn-secondary btn-sm">Logout</button>`;
-    document.getElementById('logout-btn').onclick = doLogout;
+    loginBtn.classList.add('hidden');
+    authedSpan.classList.remove('hidden');
+    logoutBtn.classList.remove('hidden');
     addBtn.classList.remove('hidden');
   } else {
-    bar.innerHTML = `<button id="login-btn" class="btn btn-secondary btn-sm">Login</button>`;
-    document.getElementById('login-btn').onclick = showLoginModal;
+    loginBtn.classList.remove('hidden');
+    authedSpan.classList.add('hidden');
+    logoutBtn.classList.add('hidden');
     addBtn.classList.add('hidden');
   }
 }
@@ -145,7 +156,7 @@ function hideLoginModal() {
 
 function doLogin() {
   const pw = document.getElementById('login-password').value;
-  fetch('/api/auth/login', {
+  fetch(BASE + '/api/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ password: pw }),
@@ -163,7 +174,7 @@ function doLogin() {
 }
 
 function doLogout() {
-  fetch('/api/auth/logout', { method: 'POST' }).finally(() => {
+  fetch(BASE + '/api/auth/logout', { method: 'POST' }).finally(() => {
     state.authed = false;
     renderAuthBar();
     loadChannels();
@@ -171,7 +182,7 @@ function doLogout() {
 }
 
 function checkAuth() {
-  return fetch('/api/auth/status')
+  return fetch(BASE + '/api/auth/status')
     .then(r => r.json())
     .then(d => {
       state.passwordConfigured = d.password_configured;
@@ -361,7 +372,7 @@ function initAddPanel() {
     };
 
     try {
-      const resp = await fetch('/api/channels', {
+      const resp = await fetch(BASE + '/api/channels', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -657,7 +668,7 @@ function attachWaterfall(wfWrap, label, channelFreqs) {
       analyser.smoothingTimeConstant = 0.6;
       analyser.connect(audioCtx.destination);
 
-      const resp = await fetch('/api/audio/' + encodeURIComponent(label));
+      const resp = await fetch(BASE + '/api/audio/' + encodeURIComponent(label));
       if (!resp.ok || !resp.body) throw new Error('stream unavailable');
 
       const mediaSource = audioCtx.createMediaStreamSource
@@ -771,7 +782,7 @@ function renderChannelCard(ch) {
       showLoginModal(); return;
     }
     if (!confirm(`Remove channel "${ch.label}"?`)) return;
-    const resp = await fetch('/api/channels/' + encodeURIComponent(ch.label), { method: 'DELETE' });
+    const resp = await fetch(BASE + '/api/channels/' + encodeURIComponent(ch.label), { method: 'DELETE' });
     if (resp.status === 401) { showLoginModal(); return; }
     if (resp.ok) loadChannels();
     else alert('Error removing channel');
@@ -1012,7 +1023,7 @@ function renderChannelCard(ch) {
       dcd_threshold: smCfg.dcd_threshold || 20,
       channels:      newChannels,
     };
-    const resp = await fetch('/api/channels/' + encodeURIComponent(ch.label), {
+    const resp = await fetch(BASE + '/api/channels/' + encodeURIComponent(ch.label), {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ modem_config: newCfg }),
@@ -1239,7 +1250,7 @@ function renderChannels(list) {
 
 async function loadChannels() {
   try {
-    const resp = await fetch('/api/channels');
+    const resp = await fetch(BASE + '/api/channels');
     if (!resp.ok) return;
     const channels = await resp.json();
     renderChannels(channels);
@@ -1258,7 +1269,7 @@ function connectSSE() {
   const dot = document.getElementById('conn-status');
   if (sseSource) sseSource.close();
 
-  sseSource = new EventSource('/api/events');
+  sseSource = new EventSource(BASE + '/api/events');
 
   sseSource.onopen = () => {
     dot.className = 'conn-status conn-connected';

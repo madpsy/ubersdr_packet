@@ -5,13 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>UberSDR Packet</title>
   <link rel="stylesheet" href="style.css">
+  <script>window.BASE_PATH = "{{.BasePath}}";</script>
 </head>
 <body>
   <header>
     <div class="header-inner">
       <h1>UberSDR Packet</h1>
       <div class="header-actions">
-        <span id="auth-bar"></span>
+        <button id="login-btn" class="btn btn-secondary btn-sm hidden" onclick="showLoginModal()">Login</button>
+        <span id="auth-authed" class="auth-authed hidden">Authenticated</span>
+        <button id="logout-btn" class="btn btn-secondary btn-sm hidden" onclick="doLogout()">Logout</button>
         <button id="btn-add-channel" class="btn btn-primary hidden">+ Add Channel</button>
         <span id="conn-status" class="conn-status conn-disconnected" title="SSE connection">●</span>
       </div>
