@@ -1217,6 +1217,12 @@ function renderChannels(list) {
 
   if (list.length === 0) {
     noChannels.classList.remove('hidden');
+    // Update empty-state message based on auth state
+    if (state.passwordConfigured && !state.authed) {
+      noChannels.innerHTML = 'No channels configured. <button class="btn btn-primary btn-sm" onclick="showLoginModal()">Login</button> to add channels.';
+    } else {
+      noChannels.innerHTML = 'No channels configured. Click <strong>+ Add Channel</strong> to get started.';
+    }
     return;
   }
   noChannels.classList.add('hidden');
