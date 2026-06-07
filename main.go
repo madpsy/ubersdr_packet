@@ -416,19 +416,17 @@ func main() {
 	log.Printf("[main] Data dir:     %s", *dataDir)
 
 	// Connect to MQTT broker if configured.
+	// newMQTTClient connects asynchronously with exponential backoff so the
+	// process starts immediately even if the broker isn't reachable yet.
 	var mq *mqttClient
 	if *mqttBroker != "" {
 		log.Printf("[main] MQTT broker:  %s", *mqttBroker)
-		var err error
-		mq, err = newMQTTClient(MQTTConfig{
+		mq = newMQTTClient(MQTTConfig{
 			Broker:        *mqttBroker,
 			Username:      *mqttUser,
 			Password:      *mqttPass,
 			TLSSkipVerify: *mqttTLSSkipVerify,
 		})
-		if err != nil {
-			log.Fatalf("[main] MQTT connect: %v", err)
-		}
 		defer mq.Close()
 	}
 

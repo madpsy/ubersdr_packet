@@ -9,10 +9,13 @@
 #   DATA_DIR              Directory for channels.json (default: /data)
 #   REPLAY_BUF_SIZE       Recent AX.25 frames replayed to late-joining browsers
 #                         (default: 200; set 0 to disable)
+#   MQTT_ENABLED          Set to "true" to enable MQTT publishing (default: false)
 #   MQTT_BROKER           MQTT broker URL, e.g. tcp://host:1883 or ssl://host:8883
+#                         Use ssl:// for TLS connections.
 #   MQTT_USER             MQTT username (optional)
 #   MQTT_PASS             MQTT password (optional)
 #   MQTT_TLS_SKIP_VERIFY  Set to "true" to skip TLS certificate verification
+#                         (useful for self-signed certificates)
 
 set -e
 
@@ -23,11 +26,13 @@ args=""
 [ -n "$UI_PASSWORD"     ] && args="$args -ui-password $UI_PASSWORD"
 [ -n "$REPLAY_BUF_SIZE" ] && args="$args -replay-buf $REPLAY_BUF_SIZE"
 
-# MQTT
-[ -n "$MQTT_BROKER"           ] && args="$args -mqtt-broker $MQTT_BROKER"
-[ -n "$MQTT_USER"             ] && args="$args -mqtt-user $MQTT_USER"
-[ -n "$MQTT_PASS"             ] && args="$args -mqtt-pass $MQTT_PASS"
-[ "$MQTT_TLS_SKIP_VERIFY" = "true" ] && args="$args -mqtt-tls-skip-verify"
+# MQTT — only active when MQTT_ENABLED=true AND MQTT_BROKER is set.
+if [ "$MQTT_ENABLED" = "true" ] && [ -n "$MQTT_BROKER" ]; then
+    args="$args -mqtt-broker $MQTT_BROKER"
+    [ -n "$MQTT_USER" ] && args="$args -mqtt-user $MQTT_USER"
+    [ -n "$MQTT_PASS" ] && args="$args -mqtt-pass $MQTT_PASS"
+    [ "$MQTT_TLS_SKIP_VERIFY" = "true" ] && args="$args -mqtt-tls-skip-verify"
+fi
 
 DATA_DIR="${DATA_DIR:-/data}"
 args="$args -data $DATA_DIR"

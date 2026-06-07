@@ -18,8 +18,13 @@ services:
       # WEB_PORT: "6089"
       # REPLAY_BUF_SIZE: "200"   # Recent AX.25 frames replayed to late-joining browsers (0 to disable)
       #
-      # MQTT — optional; when set, raw KISS frames are published per channel
-      # MQTT_BROKER: "tcp://mqtt.example.com:1883"   # or ssl://…:8883 for TLS
+      # MQTT — optional; set MQTT_ENABLED=true and configure the broker to
+      # publish raw KISS frames per channel to <topic_prefix>/<channel_label>.
+      # Use ssl:// broker URL for TLS; set MQTT_TLS_SKIP_VERIFY=true to skip
+      # certificate verification (e.g. self-signed certs).
+      # MQTT_ENABLED: "false"
+      # MQTT_BROKER: "tcp://mqtt.example.com:1883"   # plain TCP
+      # MQTT_BROKER: "ssl://mqtt.example.com:8883"   # TLS
       # MQTT_USER: ""
       # MQTT_PASS: ""
       # MQTT_TLS_SKIP_VERIFY: "false"   # set "true" to skip TLS cert verification
