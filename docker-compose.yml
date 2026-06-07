@@ -1,7 +1,7 @@
 services:
   ubersdr-packet:
     image: madpsy/ubersdr-packet:latest
-    container_name: ubersdr-packet
+    container_name: packet
     restart: unless-stopped
     init: true
     shm_size: '256m'

@@ -48,7 +48,7 @@ After installation, `ubersdr-packet` can be added as an UberSDR Proxy via the Ad
 | Field | Value |
 |-------|-------|
 | Name | `packet` |
-| Host | `ubersdr-packet` |
+| Host | `packet` |
 | Port | `6089` |
 | Enabled | `true` |
 | Strip prefix | `true` |
