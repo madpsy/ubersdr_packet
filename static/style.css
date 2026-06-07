@@ -254,11 +254,20 @@ main {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  transition: background 0.1s;
+  background: #1a1a1a;
+  border: 2px solid #444;
+  transition: background 0.1s, border-color 0.1s, box-shadow 0.1s;
 }
-.dcd-led.on { background: var(--green); border-color: var(--green); box-shadow: 0 0 4px var(--green); }
+/* Per-channel border colour when enabled (idle) */
+.dcd-led-0 { border-color: rgba(41,  182, 246, 0.5); }
+.dcd-led-1 { border-color: rgba(102, 187, 106, 0.5); }
+.dcd-led-2 { border-color: rgba(206, 147, 216, 0.5); }
+.dcd-led-3 { border-color: rgba(255, 167,  38, 0.5); }
+/* Per-channel fill + glow when DCD active */
+.dcd-led-0.on { background: #29B6F6; border-color: #29B6F6; box-shadow: 0 0 5px #29B6F6; }
+.dcd-led-1.on { background: #66BB6A; border-color: #66BB6A; box-shadow: 0 0 5px #66BB6A; }
+.dcd-led-2.on { background: #CE93D8; border-color: #CE93D8; box-shadow: 0 0 5px #CE93D8; }
+.dcd-led-3.on { background: #FFA726; border-color: #FFA726; box-shadow: 0 0 5px #FFA726; }
 
 .channel-actions { display: flex; gap: 6px; }
 
@@ -329,7 +338,7 @@ main {
 }
 .frame-row:hover { background: var(--bg3); }
 
-/* Channel badge (A/B/C/D) */
+/* Channel badge (A/B/C/D) — bright palette matching waterfall/extension */
 .frame-ch-badge {
   display: inline-block;
   font-size: 10px;
@@ -338,11 +347,19 @@ main {
   border-radius: 3px;
   flex-shrink: 0;
   letter-spacing: 0.03em;
+  color: #000;
 }
-.frame-ch-badge-0 { background: #0d47a1; color: #90caf9; }
-.frame-ch-badge-1 { background: #1b5e20; color: #a5d6a7; }
-.frame-ch-badge-2 { background: #4a148c; color: #ce93d8; }
-.frame-ch-badge-3 { background: #e65100; color: #ffcc80; }
+.frame-ch-badge-0 { background: #29B6F6; }  /* Ch A — sky blue */
+.frame-ch-badge-1 { background: #66BB6A; }  /* Ch B — bright green */
+.frame-ch-badge-2 { background: #CE93D8; }  /* Ch C — light purple */
+.frame-ch-badge-3 { background: #FFA726; }  /* Ch D — amber */
+
+/* Left-border colour per channel on frame rows */
+.frame-row { border-left: 3px solid transparent; }
+.frame-ch-0 { border-left-color: #29B6F6; }
+.frame-ch-1 { border-left-color: #66BB6A; }
+.frame-ch-2 { border-left-color: #CE93D8; }
+.frame-ch-3 { border-left-color: #FFA726; }
 
 /* Timestamp */
 .frame-time { color: var(--text-dim); white-space: nowrap; flex-shrink: 0; }
@@ -440,10 +457,11 @@ main {
   border-radius: 3px;
   flex-shrink: 0;
 }
-.monitor-ch-badge-0 { background: #0d47a1; color: #90caf9; }
-.monitor-ch-badge-1 { background: #1b5e20; color: #a5d6a7; }
-.monitor-ch-badge-2 { background: #4a148c; color: #ce93d8; }
-.monitor-ch-badge-3 { background: #e65100; color: #ffcc80; }
+/* Monitor channel badges — same bright palette */
+.monitor-ch-badge-0 { background: #29B6F6; color: #000; }
+.monitor-ch-badge-1 { background: #66BB6A; color: #000; }
+.monitor-ch-badge-2 { background: #CE93D8; color: #000; }
+.monitor-ch-badge-3 { background: #FFA726; color: #000; }
 .monitor-dir {
   font-size: 10px;
   font-weight: 700;
