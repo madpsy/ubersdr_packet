@@ -1214,7 +1214,8 @@ function renderChannelCard(ch) {
   }
 
   // ── Config pane ──
-  const cfgPane = el('div', 'config-pane');
+  const isLocked = state.passwordConfigured && !state.authed;
+  const cfgPane = el('div', 'config-pane' + (isLocked ? ' cfg-locked' : ''));
 
   // Channel settings row (name, freq, mode, bandwidth)
   const chSettingsRow = el('div', 'ch-settings-row');

@@ -256,6 +256,16 @@ main {
   font-family: monospace;
 }
 
+/* ── Config pane locked state (not authenticated) ───────────────────────── */
+.cfg-locked input,
+.cfg-locked select,
+.cfg-locked button,
+.cfg-locked textarea {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 /* ── Channel settings row (name + bandwidth in config pane) ─────────────── */
 .ch-settings-row {
   display: flex;
