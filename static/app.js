@@ -83,14 +83,25 @@ const state = {
 // ---------------------------------------------------------------------------
 
 function fmtFreq(hz) {
-  if (hz >= 1e9) return (hz / 1e9).toFixed(4) + ' GHz';
-  if (hz >= 1e6) return (hz / 1e6).toFixed(4) + ' MHz';
-  if (hz >= 1e3) return (hz / 1e3).toFixed(1) + ' kHz';
+  if (hz >= 1e9) return (hz / 1e9).toFixed(6) + ' GHz';
+  if (hz >= 1e6) return (hz / 1e6).toFixed(6) + ' MHz';
+  if (hz >= 1e3) return (hz / 1e3).toFixed(3) + ' kHz';
   return hz + ' Hz';
 }
 
 function fmtTime(d) {
   return d.toTimeString().slice(0, 8);
+}
+
+function formatAgo(ms) {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  if (m < 60) return r > 0 ? `${m}m${r}s` : `${m}m`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return rm > 0 ? `${h}h${rm}m` : `${h}h`;
 }
 
 function el(tag, cls, text) {
@@ -708,9 +719,13 @@ const channelState = {};
 function getState(id) {
   if (!channelState[id]) {
     channelState[id] = {
-      frames: [],
-      dcd:    [false, false, false, false],
-      filter: { callsign: '', smCh: 'all', maxFrames: 100 },
+      frames:        [],
+      dcd:           [false, false, false, false],
+      dcdTimers:     [null, null, null, null],
+      filter:        { type: 'all', smCh: 'all', from: '', to: '', maxFrames: 100 },
+      lastFrameTime: null,
+      lastCallsign:  null,
+      agoTimer:      null,
     };
   }
   return channelState[id];
@@ -731,11 +746,42 @@ function renderChannelCard(ch) {
   const statusBadge = el('span', 'channel-status-badge ' + (ch.instance.status || ''),
     ch.instance.status || 'stopped');
 
+  const dcdSmCh = (ch.modem_config || {}).channels || [];
+
+  function buildDCDTooltip(i) {
+    const cfg     = dcdSmCh[i] || {};
+    const enabled = cfg.enabled !== false;
+    const modemIdx = cfg.modem ?? 0;
+    const freq     = cfg.freq  ?? 850;
+    const rcvr     = cfg.rcvr_pairs ?? 0;
+    const fx25     = cfg.fx25 ?? 1;
+    const il2p     = cfg.il2p ?? 2;
+    const modemLabel = MODEM_LABELS[modemIdx] ?? `Modem ${modemIdx}`;
+    const rcvrLabel  = rcvr === 0 ? '0 (off)' : String(rcvr);
+    const fx25Label  = fx25 === 0 ? 'Off' : 'On';
+    const il2pLabels = { 0: 'Off', 1: 'IL2P', 2: 'IL2P+CRC', 3: 'Both' };
+    const il2pLabel  = il2pLabels[il2p] ?? String(il2p);
+    const statusLine = enabled ? '✔ Enabled' : '✘ Disabled';
+    return `Ch ${CH_NAMES[i]} — ${statusLine}\nModem: ${modemLabel}\nFreq: ${freq} Hz\nRcvr Pairs: ${rcvrLabel}\nFX.25: ${fx25Label}\nIL2P: ${il2pLabel}`;
+  }
+
+  function updateDCDLed(i, on) {
+    const led = dcdLeds[i];
+    if (!led) return;
+    const cfg     = dcdSmCh[i] || {};
+    const enabled = cfg.enabled !== false;
+    led.classList.toggle('on',       on);
+    led.classList.toggle('disabled', !enabled);
+    led.title = buildDCDTooltip(i);
+  }
+
   const dcdRow = el('div', 'dcd-indicators');
   const dcdLeds = [];
   for (let i = 0; i < 4; i++) {
-    const led = el('div', 'dcd-led' + (state.dcd[i] ? ' on' : ''));
-    led.title = 'Ch ' + CH_NAMES[i];
+    const cfg     = dcdSmCh[i] || {};
+    const enabled = cfg.enabled !== false;
+    const led = el('div', `dcd-led dcd-led-${i}${state.dcd[i] ? ' on' : ''}${!enabled ? ' disabled' : ''}`);
+    led.title = buildDCDTooltip(i);
     dcdLeds.push(led);
     dcdRow.appendChild(led);
   }
@@ -818,6 +864,9 @@ function renderChannelCard(ch) {
       body.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
       btn.classList.add('active');
       pane.classList.add('active');
+      // Scroll scrollable lists to bottom when switching to their tab
+      const scrollable = pane.querySelector('.log-list, .monitor-list');
+      if (scrollable) scrollable.scrollTop = scrollable.scrollHeight;
     });
     tabs.appendChild(btn);
     panes[key] = pane;
@@ -835,59 +884,150 @@ function renderChannelCard(ch) {
   // ── Frames pane ──
   const toolbar = el('div', 'frames-toolbar');
 
+  // Type filter — matches extension options exactly
+  const selType = document.createElement('select');
+  [['all','All'],['aprs','APRS'],['ui','UI'],['connected','Connected'],
+   ['netrom','NET/ROM'],['control','S-frames'],['ip','IP/ARP']].forEach(([v,t]) => {
+    const o = document.createElement('option'); o.value = v; o.textContent = t;
+    selType.appendChild(o);
+  });
+  selType.addEventListener('change', () => { state.filter.type = selType.value; renderFrames(); });
+
+  // Channel filter
   const selSmCh = document.createElement('select');
-  [['all', 'All modem ch'], ...CH_NAMES.map((n, i) => [String(i), 'Ch ' + n])].forEach(([v, t]) => {
+  [['all','All'],...CH_NAMES.map((n,i) => [String(i), n])].forEach(([v,t]) => {
     const o = document.createElement('option'); o.value = v; o.textContent = t;
     selSmCh.appendChild(o);
   });
   selSmCh.addEventListener('change', () => { state.filter.smCh = selSmCh.value; renderFrames(); });
 
-  const inpCall = document.createElement('input');
-  inpCall.type = 'text';
-  inpCall.placeholder = 'Filter callsign…';
-  inpCall.style.width = '130px';
-  inpCall.addEventListener('input', () => { state.filter.callsign = inpCall.value.trim().toUpperCase(); renderFrames(); });
+  // Sender dropdown (populated dynamically)
+  const selFrom = document.createElement('select');
+  selFrom.appendChild(Object.assign(document.createElement('option'), { value: '', textContent: 'From: All' }));
+  selFrom.addEventListener('change', () => { state.filter.from = selFrom.value; renderFrames(); });
 
+  // Destination dropdown (populated dynamically)
+  const selTo = document.createElement('select');
+  selTo.appendChild(Object.assign(document.createElement('option'), { value: '', textContent: 'To: All' }));
+  selTo.addEventListener('change', () => { state.filter.to = selTo.value; renderFrames(); });
+
+  // Max frames
   const selMax = document.createElement('select');
-  [50, 100, 200, 500].forEach(n => {
-    const o = document.createElement('option'); o.value = n; o.textContent = n + ' frames';
-    if (n === 100) o.selected = true;
+  [[10,'10'],[25,'25'],[50,'50'],[100,'100'],[250,'250'],[500,'500'],[0,'∞']].forEach(([v,t]) => {
+    const o = document.createElement('option'); o.value = v; o.textContent = t;
+    if (v === 100) o.selected = true;
     selMax.appendChild(o);
   });
-  selMax.addEventListener('change', () => { state.filter.maxFrames = parseInt(selMax.value); renderFrames(); });
+  selMax.addEventListener('change', () => { state.filter.maxFrames = parseInt(selMax.value) || 0; renderFrames(); });
 
   const btnClear = el('button', 'btn btn-secondary btn-sm', 'Clear');
-  btnClear.addEventListener('click', () => { state.frames = []; renderFrames(); });
+  btnClear.addEventListener('click', () => {
+    state.frames = [];
+    // Reset dropdowns
+    while (selFrom.options.length > 1) selFrom.remove(1);
+    while (selTo.options.length > 1) selTo.remove(1);
+    state.filter.from = ''; state.filter.to = '';
+    selFrom.value = ''; selTo.value = '';
+    // Reset last-callsign stats
+    state.lastFrameTime = null;
+    state.lastCallsign  = null;
+    statsLastCall.textContent = '---';
+    stopAgoTimer();
+    renderFrames();
+  });
 
   const countEl = el('span', 'frame-count', '0 frames');
 
-  toolbar.appendChild(el('label', 'text-dim', 'Modem ch: '));
+  toolbar.appendChild(el('label', 'text-dim', 'Type:'));
+  toolbar.appendChild(selType);
+  toolbar.appendChild(el('label', 'text-dim', 'Ch:'));
   toolbar.appendChild(selSmCh);
-  toolbar.appendChild(el('label', 'text-dim', 'Callsign: '));
-  toolbar.appendChild(inpCall);
-  toolbar.appendChild(el('label', 'text-dim', 'Show: '));
+  toolbar.appendChild(selFrom);
+  toolbar.appendChild(selTo);
+  toolbar.appendChild(el('label', 'text-dim', 'Max:'));
   toolbar.appendChild(selMax);
   toolbar.appendChild(btnClear);
   toolbar.appendChild(countEl);
   framesPane.appendChild(toolbar);
 
+  // ── Stats bar (Frames count + Last callsign / time ago) ──
+  const statsBar = el('div', 'frames-stats-bar');
+  const statsFrames = el('span', 'frames-stat', '0 frames');
+  const statsSep    = el('span', 'frames-stat-sep', '|');
+  const statsLastLbl = el('span', 'frames-stat-label', 'Last:');
+  const statsLastCall = el('span', 'frames-stat-callsign', '---');
+  const statsLastAgo  = el('span', 'frames-stat-ago', '');
+  statsBar.appendChild(statsFrames);
+  statsBar.appendChild(statsSep);
+  statsBar.appendChild(statsLastLbl);
+  statsBar.appendChild(statsLastCall);
+  statsBar.appendChild(statsLastAgo);
+  framesPane.appendChild(statsBar);
+
+  function updateAgoDisplay() {
+    if (!state.lastFrameTime) { statsLastAgo.textContent = ''; return; }
+    statsLastAgo.textContent = formatAgo(Date.now() - state.lastFrameTime);
+  }
+
+  function startAgoTimer() {
+    if (state.agoTimer) return;
+    state.agoTimer = setInterval(updateAgoDisplay, 1000);
+  }
+
+  function stopAgoTimer() {
+    if (state.agoTimer) { clearInterval(state.agoTimer); state.agoTimer = null; }
+    statsLastAgo.textContent = '';
+  }
+
   const framesList = el('div', 'frames-list');
   framesPane.appendChild(framesList);
+
+  // Sets for tracking unique callsigns seen in sender/dest dropdowns
+  const seenFrom = new Set();
+  const seenTo   = new Set();
+
+  function updateCallsignDropdowns(entry) {
+    if (entry.from && !seenFrom.has(entry.from)) {
+      seenFrom.add(entry.from);
+      const o = document.createElement('option'); o.value = entry.from; o.textContent = entry.from;
+      selFrom.appendChild(o);
+    }
+    if (entry.to && !seenTo.has(entry.to)) {
+      seenTo.add(entry.to);
+      const o = document.createElement('option'); o.value = entry.to; o.textContent = entry.to;
+      selTo.appendChild(o);
+    }
+  }
+
+  const CONNECTED_CSS = new Set(['i','rr','rnr','rej','srej','sabm','sabme','ua','disc','dm','frmr','xid','test']);
+  const CONTROL_CSS   = new Set(['rr','rnr','rej','srej']);
+
+  function frameMatchesType(entry, typeFilter) {
+    if (typeFilter === 'all') return true;
+    const p = entry.parsed;
+    const ft = p ? (p.frameType || 'ui') : 'raw';
+    const cssType = (ft.startsWith('l4-') || ft === 'netrom' || ft === 'nodes') ? 'netrom' : ft;
+    switch (typeFilter) {
+      case 'aprs':     return cssType === 'aprs';
+      case 'ui':       return cssType === 'ui' || cssType === 'aprs';
+      case 'connected':return CONNECTED_CSS.has(cssType);
+      case 'netrom':   return cssType === 'netrom' || cssType === 'nodes';
+      case 'control':  return CONTROL_CSS.has(cssType);
+      case 'ip':       return cssType === 'ip' || cssType === 'arp';
+      default:         return true;
+    }
+  }
 
   function renderFrames() {
     const f = state.filter;
     let rows = state.frames;
     if (f.smCh !== 'all') rows = rows.filter(r => String(r.smCh) === f.smCh);
-    if (f.callsign) {
-      const cs = f.callsign.toUpperCase();
-      rows = rows.filter(r =>
-        (r.from && r.from.toUpperCase().includes(cs)) ||
-        (r.to   && r.to.toUpperCase().includes(cs))   ||
-        (r.via  && r.via.some(v => v.toUpperCase().includes(cs)))
-      );
-    }
-    rows = rows.slice(-f.maxFrames);
+    if (f.type  && f.type !== 'all') rows = rows.filter(r => frameMatchesType(r, f.type));
+    if (f.from) rows = rows.filter(r => (r.from || '').toLowerCase() === f.from.toLowerCase());
+    if (f.to)   rows = rows.filter(r => (r.to   || '').toLowerCase() === f.to.toLowerCase());
+    if (f.maxFrames > 0) rows = rows.slice(-f.maxFrames);
     countEl.textContent = state.frames.length + ' frames';
+    statsFrames.textContent = state.frames.length + ' frames';
 
     framesList.innerHTML = '';
     rows.forEach(r => framesList.appendChild(buildFrameRow(r)));
@@ -1047,8 +1187,9 @@ function renderChannelCard(ch) {
     row.dataset.from = entry.from;
     row.dataset.to   = entry.to;
 
-    // Channel badge
+    // Channel badge — tooltip shows modem config for this sub-channel
     const badge = el('span', `frame-ch-badge frame-ch-badge-${entry.smCh}`, CH_NAMES[entry.smCh] || String(entry.smCh));
+    badge.title = buildDCDTooltip(entry.smCh);
     row.appendChild(badge);
 
     // Timestamp
@@ -1140,14 +1281,38 @@ function renderChannelCard(ch) {
       };
       state.frames.push(entry);
       if (state.frames.length > MAX_FRAMES) state.frames.shift();
+      updateCallsignDropdowns(entry);
+      // Update last-callsign stats
+      state.lastFrameTime = Date.now();
+      if (entry.from) {
+        state.lastCallsign = entry.from;
+        statsLastCall.textContent = entry.from;
+      }
+      updateAgoDisplay();
+      startAgoTimer();
       renderFrames();
 
     } else if (type === MSG_DCD) {
       if (data.length < 3) return;
       const smCh = data[1];
-      const on   = data[2] !== 0;
-      state.dcd[smCh] = on;
-      if (dcdLeds[smCh]) dcdLeds[smCh].classList.toggle('on', on);
+      const dcdOn = data[2] !== 0;
+      if (smCh >= 4) return;
+      if (dcdOn) {
+        // Light the LED and (re)start the 500ms auto-clear timer
+        state.dcd[smCh] = true;
+        updateDCDLed(smCh, true);
+        if (state.dcdTimers[smCh]) clearTimeout(state.dcdTimers[smCh]);
+        state.dcdTimers[smCh] = setTimeout(() => {
+          state.dcdTimers[smCh] = null;
+          state.dcd[smCh] = false;
+          updateDCDLed(smCh, false);
+        }, 500);
+      } else {
+        // Explicit DCD-off: cancel timer and clear immediately
+        if (state.dcdTimers[smCh]) { clearTimeout(state.dcdTimers[smCh]); state.dcdTimers[smCh] = null; }
+        state.dcd[smCh] = false;
+        updateDCDLed(smCh, false);
+      }
 
     } else if (type === MSG_MONITOR) {
       if (data.length < 7) return;
