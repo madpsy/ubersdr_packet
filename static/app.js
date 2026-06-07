@@ -692,6 +692,26 @@ function attachWaterfall(wfWrap, label, channelFreqs) {
       audioEl.src = BASE + '/api/audio/' + encodeURIComponent(label);
       audioEl.crossOrigin = 'anonymous';
 
+      // Browsers can stall on long-running streaming WAV (buffer fills up,
+      // or the element fires 'stalled'/'waiting'/'ended'). Resume playback
+      // automatically whenever this happens.
+      const resume = () => {
+        if (stopped) return;
+        audioEl.play().catch(() => {});
+      };
+      audioEl.addEventListener('stalled', resume);
+      audioEl.addEventListener('waiting', resume);
+      audioEl.addEventListener('ended',   resume);
+      audioEl.addEventListener('error', () => {
+        if (stopped) return;
+        // On error, reload the stream after a short delay
+        setTimeout(() => {
+          if (stopped) return;
+          audioEl.load();
+          audioEl.play().catch(() => {});
+        }, 2000);
+      });
+
       source = audioCtx.createMediaElementSource(audioEl);
       source.connect(analyser);
       await audioEl.play();
@@ -1625,7 +1645,7 @@ async function loadConfig() {
   }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   // Expose state globally so card handlers can check auth
   window.state = state;
 
@@ -1637,8 +1657,10 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   initAddPanel();
-  loadConfig();
-  checkAuth().then(() => loadChannels());
+  // Load config (sets state.mqttConfigured etc.) and auth status before
+  // rendering channels so the config pane has the correct feature flags.
+  await Promise.all([loadConfig(), checkAuth()]);
+  loadChannels();
   connectSSE();
 
   // Refresh channel status every 10 s
