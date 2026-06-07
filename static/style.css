@@ -779,6 +779,36 @@ body.mqtt-enabled .mqtt-prefix-row {
   gap: 8px;
   margin-bottom: 6px;
 }
+
+/* Collapsed-state last-frame summary — right-aligned, shows a full frame row */
+.wf-collapsed-info {
+  margin-left: auto;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  /* Hidden when body is expanded */
+  display: none;
+}
+/* Show only when body is collapsed */
+.channel-card.body-collapsed .wf-collapsed-info {
+  display: block;
+}
+/* The embedded frame-row should be flush — no extra border/margin */
+.wf-collapsed-info .frame-row {
+  border-bottom: none;
+  border-left: none;
+  padding: 0 4px;
+  background: transparent !important;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-wrap: nowrap;
+}
+.wf-collapsed-info .frame-payload {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .wf-wrap {
   /* empty until Preview is clicked */
 }

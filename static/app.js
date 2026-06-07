@@ -337,6 +337,28 @@ function initAddPanel() {
   for (let i = 0; i < 4; i++) grid.appendChild(buildModemChannelCard(i, null));
 
   // Frequency preset dropdown — populates freq + mode fields
+  // Split MQTT topic field: read-only prefix badge + editable suffix input.
+  // The badge shows the global prefix (e.g. "packet/") from the server config.
+  // The suffix auto-populates from the channel name/label as the user types,
+  // unless they've manually edited it.
+  const mqttSuffixEl = document.getElementById('add-mqtt-suffix');
+  const mqttBadgeEl  = document.getElementById('add-mqtt-prefix-badge');
+  let mqttSuffixManual = false;
+  const syncMqttSuffix = () => {
+    if (!mqttSuffixEl || mqttSuffixManual) return;
+    const nameVal = (document.getElementById('add-name').value || '').trim();
+    const freqVal = document.getElementById('add-freq').value || '';
+    const modeVal = (document.getElementById('add-mode') || {}).value || '';
+    mqttSuffixEl.value = nameVal || (freqVal && modeVal ? freqVal + '_' + modeVal : freqVal);
+  };
+  if (mqttSuffixEl) {
+    mqttSuffixEl.addEventListener('input', () => { mqttSuffixManual = true; });
+    document.getElementById('add-name').addEventListener('input', syncMqttSuffix);
+    document.getElementById('add-freq').addEventListener('input', syncMqttSuffix);
+    const modeEl = document.getElementById('add-mode');
+    if (modeEl) modeEl.addEventListener('change', syncMqttSuffix);
+  }
+
   const presetSel = document.getElementById('add-freq-preset');
   if (presetSel) {
     let lastVal = '';
@@ -347,34 +369,14 @@ function initAddPanel() {
       const modeEl = document.getElementById('add-mode');
       if (modeEl) modeEl.value = mode;
       lastVal = val;
+      // Programmatic .value= doesn't fire input/change events, so sync manually
+      syncMqttSuffix();
     };
     presetSel.addEventListener('change', e => applyPreset(e.target.value));
     // Allow re-clicking the same option to re-apply
     presetSel.addEventListener('click', e => {
       if (e.target.value && e.target.value === lastVal) applyPreset(e.target.value);
     });
-  }
-
-  // Split MQTT topic field: read-only prefix badge + editable suffix input.
-  // The badge shows the global prefix (e.g. "packet/") from the server config.
-  // The suffix auto-populates from the channel name/label as the user types,
-  // unless they've manually edited it.
-  const mqttSuffixEl = document.getElementById('add-mqtt-suffix');
-  const mqttBadgeEl  = document.getElementById('add-mqtt-prefix-badge');
-  let mqttSuffixManual = false;
-  if (mqttSuffixEl) {
-    mqttSuffixEl.addEventListener('input', () => { mqttSuffixManual = true; });
-    const syncMqttSuffix = () => {
-      if (mqttSuffixManual) return;
-      const nameVal = (document.getElementById('add-name').value || '').trim();
-      const freqVal = document.getElementById('add-freq').value || '';
-      const modeVal = (document.getElementById('add-mode') || {}).value || '';
-      mqttSuffixEl.value = nameVal || (freqVal && modeVal ? freqVal + '_' + modeVal : freqVal);
-    };
-    document.getElementById('add-name').addEventListener('input', syncMqttSuffix);
-    document.getElementById('add-freq').addEventListener('input', syncMqttSuffix);
-    const modeEl = document.getElementById('add-mode');
-    if (modeEl) modeEl.addEventListener('change', syncMqttSuffix);
   }
 
   btnOpen.addEventListener('click', () => {
@@ -902,6 +904,10 @@ function renderChannelCard(ch) {
   const btnPreview = el('button', 'btn btn-secondary btn-sm', '▶ Preview');
   const btnMute = el('button', 'btn btn-secondary btn-sm wf-mute-btn', '🔇 Mute');
   btnMute.style.display = 'none';
+
+  // Collapsed-state summary: last decoded frame line (from→to payload)
+  // Shown only when the channel body is collapsed (CSS hides it when expanded)
+  const collapsedInfo = el('div', 'wf-collapsed-info');
   btnPreview.addEventListener('click', () => {
     if (wfHandle) {
       wfHandle.stop();
@@ -923,6 +929,7 @@ function renderChannelCard(ch) {
   });
   wfBtnRow.appendChild(btnPreview);
   wfBtnRow.appendChild(btnMute);
+  wfBtnRow.appendChild(collapsedInfo);
   wfSection.appendChild(wfBtnRow);
   wfSection.appendChild(wfWrap);
 
@@ -932,7 +939,8 @@ function renderChannelCard(ch) {
 
   hdr.addEventListener('click', (e) => {
     if (e.target.closest('.channel-actions')) return;
-    body.classList.toggle('collapsed');
+    const nowCollapsed = body.classList.toggle('collapsed');
+    card.classList.toggle('body-collapsed', nowCollapsed);
   });
 
   // ── Tabs ──
@@ -949,7 +957,7 @@ function renderChannelCard(ch) {
       btn.classList.add('active');
       pane.classList.add('active');
       // Scroll scrollable lists to bottom when switching to their tab
-      const scrollable = pane.querySelector('.log-list, .monitor-list');
+      const scrollable = pane.querySelector('.frames-list, .log-list, .monitor-list');
       if (scrollable) scrollable.scrollTop = scrollable.scrollHeight;
     });
     tabs.appendChild(btn);
@@ -1181,9 +1189,10 @@ function renderChannelCard(ch) {
     countEl.textContent = state.frames.length + ' frames';
     statsFrames.textContent = state.frames.length + ' frames';
 
+    const framesAtBottom = framesList.scrollHeight - framesList.scrollTop - framesList.clientHeight < 40;
     framesList.innerHTML = '';
     rows.forEach(r => framesList.appendChild(buildFrameRow(r)));
-    framesList.scrollTop = framesList.scrollHeight;
+    if (framesAtBottom) framesList.scrollTop = framesList.scrollHeight;
   }
 
   // ── Monitor pane ──
@@ -1214,6 +1223,7 @@ function renderChannelCard(ch) {
     line.appendChild(badge);
     line.appendChild(dirEl);
     line.appendChild(textEl);
+    const monitorAtBottom = monitorList.scrollHeight - monitorList.scrollTop - monitorList.clientHeight < 40;
     monitorList.appendChild(line);
     monitorLines++;
 
@@ -1221,7 +1231,7 @@ function renderChannelCard(ch) {
       monitorList.removeChild(monitorList.firstChild);
       monitorLines--;
     }
-    monitorList.scrollTop = monitorList.scrollHeight;
+    if (monitorAtBottom) monitorList.scrollTop = monitorList.scrollHeight;
   }
 
   // ── Log pane ──
@@ -1500,9 +1510,9 @@ function renderChannelCard(ch) {
       let parsed = null;
       try { if (window.AX25Decode) parsed = window.AX25Decode.parse(ax25); } catch (_) {}
 
-      // Drop noise frames with invalid callsigns (same as extension)
-      if (parsed && (!VALID_CALL.test(parsed.src || parsed.from || '') ||
-                     !VALID_CALL.test(parsed.dst || parsed.to   || ''))) {
+      // Drop noise frames with invalid source callsigns.
+      // Destination may be blank/null (some beacon software uses empty destinations) — allow it.
+      if (parsed && !VALID_CALL.test(parsed.src || parsed.from || '')) {
         parsed = null; // treat as raw
       }
 
@@ -1524,6 +1534,9 @@ function renderChannelCard(ch) {
         state.lastCallsign = entry.from;
         statsLastCall.textContent = entry.from;
       }
+      // Update collapsed-state summary with a full frame row (same as expanded view)
+      collapsedInfo.innerHTML = '';
+      collapsedInfo.appendChild(buildFrameRow(entry));
       updateAgoDisplay();
       startAgoTimer();
       renderFrames();

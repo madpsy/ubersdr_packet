@@ -6,7 +6,25 @@
 //
 // Channels are persisted to channels.json inside the data directory.
 //
-// Usage:
+// Configuration is via environment variables (preferred) or CLI flags (both
+// are supported simultaneously; CLI flags take precedence over env vars).
+//
+// Environment variables:
+//
+//	UBERSDR_URL           UberSDR WebSocket URL (required)
+//	UBERSDR_PASS          UberSDR bypass password
+//	UI_PASSWORD           Password for write actions in the web UI
+//	WEB_PORT              HTTP listen port (default: 6089)
+//	DATA_DIR              Directory for channels.json (default: ./data)
+//	REPLAY_BUF_SIZE       AX.25 frames buffered per channel for late-joining
+//	                      browsers (default: 200)
+//	MQTT_BROKER           MQTT broker URL, e.g. tcp://host:1883
+//	MQTT_USER             MQTT username
+//	MQTT_PASS             MQTT password
+//	MQTT_TLS_SKIP_VERIFY  Set to "true" to skip TLS certificate verification
+//	MQTT_TOPIC_PREFIX     Default MQTT topic prefix (default: "packet")
+//
+// Equivalent CLI flags (run with -help for full list):
 //
 //	ubersdr-packet -url ws://sdr.example.com/ws \
 //	               -listen :6089 \

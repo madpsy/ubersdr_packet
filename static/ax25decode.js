@@ -90,7 +90,8 @@ window.AX25Decode = (() => {
         const ssid     = (ssidByte >> 1) & 0x0F;
         const hBit     = (ssidByte & 0x80) !== 0;
         const isLast   = (ssidByte & 0x01) !== 0;
-        const callStr  = ssid > 0 ? `${call}-${ssid}` : call;
+        // Blank/null destination (some beacon software sends all-space address)
+        const callStr  = call.length === 0 ? '(none)' : (ssid > 0 ? `${call}-${ssid}` : call);
         return { call: callStr, ssid, hBit, isLast };
     }
 
