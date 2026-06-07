@@ -816,14 +816,20 @@ function renderChannelCard(ch) {
     fmtFreq(ch.instance.freq_hz) + ' ' + ch.instance.audio_mode.toUpperCase());
   const statusBadge = el('span', 'channel-status-badge ' + (ch.instance.status || ''),
     ch.instance.status || 'stopped');
-  // MQTT topic badge — shown when MQTT is configured; displays the full topic
-  // (global prefix + "/" + per-channel suffix, or prefix + "/" + label).
-  // Use window.state (global app state) — local `state` is the per-channel state.
+  // MQTT topic badge — always created; text and visibility updated dynamically
+  // via _updateStatus so it reflects the current global prefix from window.state.
   const mqttSuffix = ch.mqtt_topic_prefix || ch.label;
-  const appState = window.state;
-  const mqttBadge = (appState && appState.mqttConfigured)
-    ? el('span', 'channel-mqtt-badge', '📡 ' + (appState.mqttTopicPrefix ? appState.mqttTopicPrefix + '/' + mqttSuffix : mqttSuffix))
-    : null;
+  const mqttBadge = el('span', 'channel-mqtt-badge');
+  const updateMqttBadge = () => {
+    const as = window.state;
+    if (as && as.mqttConfigured) {
+      mqttBadge.textContent = '📡 ' + (as.mqttTopicPrefix ? as.mqttTopicPrefix + '/' + mqttSuffix : mqttSuffix);
+      mqttBadge.classList.remove('hidden');
+    } else {
+      mqttBadge.classList.add('hidden');
+    }
+  };
+  updateMqttBadge();
 
   const dcdSmCh = (ch.modem_config || {}).channels || [];
 
@@ -883,7 +889,7 @@ function renderChannelCard(ch) {
   hdr.appendChild(labelEl);
   hdr.appendChild(freqEl);
   hdr.appendChild(statusBadge);
-  if (mqttBadge) hdr.appendChild(mqttBadge);
+  hdr.appendChild(mqttBadge);
   hdr.appendChild(dcdRow);
   hdr.appendChild(actions);
   card.appendChild(hdr);
@@ -1589,6 +1595,7 @@ function renderChannelCard(ch) {
   card._updateStatus = (inst) => {
     statusBadge.textContent = inst.status || 'stopped';
     statusBadge.className = 'channel-status-badge ' + (inst.status || '');
+    updateMqttBadge();
   };
 
   return card;
