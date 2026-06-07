@@ -130,6 +130,10 @@ function renderAuthBar() {
   const logoutBtn  = document.getElementById('logout-btn');
   const addBtn     = document.getElementById('btn-add-channel');
 
+  // Body-level classes drive CSS for config-pane locking across all cards.
+  document.body.classList.toggle('pw-configured', !!state.passwordConfigured);
+  document.body.classList.toggle('is-authed',     !!state.authed || !state.passwordConfigured);
+
   if (!state.passwordConfigured) {
     // No password set — everyone can write
     loginBtn.classList.add('hidden');
@@ -1234,8 +1238,9 @@ function renderChannelCard(ch) {
   }
 
   // ── Config pane ──
-  const isLocked = state.passwordConfigured && !state.authed;
-  const cfgPane = el('div', 'config-pane' + (isLocked ? ' cfg-locked' : ''));
+  // Locking is driven by body.pw-configured:not(.is-authed) CSS selector,
+  // so no per-card isLocked flag is needed here.
+  const cfgPane = el('div', 'config-pane');
 
   // Channel settings row (name, freq, mode, bandwidth)
   const chSettingsRow = el('div', 'ch-settings-row');
@@ -1290,20 +1295,17 @@ function renderChannelCard(ch) {
   const smChannels = smCfg.channels || [{}, {}, {}, {}];
   for (let i = 0; i < 4; i++) cfgGrid.appendChild(buildModemChannelCard(i, smChannels[i]));
 
-  // MQTT prefix row — only shown when broker is configured
-  let mqttPrefixInput = null;
-  if (state.mqttConfigured) {
-    const mqttRow = el('div', 'mqtt-prefix-row');
-    const mqttLabel = el('label', '', '📡 MQTT Topic Prefix');
-    mqttPrefixInput = document.createElement('input');
-    mqttPrefixInput.type = 'text';
-    mqttPrefixInput.className = 'mqtt-prefix-input';
-    mqttPrefixInput.placeholder = 'e.g. packet/rx';
-    mqttPrefixInput.value = ch.mqtt_topic_prefix || '';
-    mqttLabel.appendChild(mqttPrefixInput);
-    mqttRow.appendChild(mqttLabel);
-    cfgPane.appendChild(mqttRow);
-  }
+  // MQTT prefix row — always rendered; CSS hides it unless body.mqtt-enabled
+  const mqttRow = el('div', 'mqtt-prefix-row');
+  const mqttLabel = el('label', '', '📡 MQTT Topic Prefix');
+  const mqttPrefixInput = document.createElement('input');
+  mqttPrefixInput.type = 'text';
+  mqttPrefixInput.className = 'mqtt-prefix-input';
+  mqttPrefixInput.placeholder = 'e.g. packet/rx';
+  mqttPrefixInput.value = ch.mqtt_topic_prefix || '';
+  mqttLabel.appendChild(mqttPrefixInput);
+  mqttRow.appendChild(mqttLabel);
+  cfgPane.appendChild(mqttRow);
 
   const cfgActions = el('div', 'config-actions');
   const btnSave = el('button', 'btn btn-primary', 'Save Config');
@@ -1324,9 +1326,7 @@ function renderChannelCard(ch) {
       mode:          modeSelect.value,
       bandwidth_hz:  parseInt(bwInput.value) || 0,
     };
-    if (mqttPrefixInput !== null) {
-      patchBody.mqtt_topic_prefix = mqttPrefixInput.value.trim();
-    }
+    patchBody.mqtt_topic_prefix = mqttPrefixInput.value.trim();
     const resp = await fetch(BASE + '/api/channels/' + encodeURIComponent(ch.label), {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -1637,6 +1637,9 @@ async function loadConfig() {
     if (!resp.ok) return;
     const cfg = await resp.json();
     state.mqttConfigured = !!cfg.mqtt_configured;
+    // Body class drives CSS visibility of all MQTT rows (add-channel form
+    // and per-channel config panes) without needing to re-render cards.
+    document.body.classList.toggle('mqtt-enabled', state.mqttConfigured);
     // Show/hide MQTT topic prefix row in the add-channel form
     const row = document.getElementById('add-mqtt-prefix-row');
     if (row) row.classList.toggle('hidden', !state.mqttConfigured);

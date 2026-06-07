@@ -257,10 +257,11 @@ main {
 }
 
 /* ── Config pane locked state (not authenticated) ───────────────────────── */
-.cfg-locked input,
-.cfg-locked select,
-.cfg-locked button,
-.cfg-locked textarea {
+/* Driven by body classes set in renderAuthBar() — no per-card class needed. */
+body.pw-configured:not(.is-authed) .config-pane input,
+body.pw-configured:not(.is-authed) .config-pane select,
+body.pw-configured:not(.is-authed) .config-pane button,
+body.pw-configured:not(.is-authed) .config-pane textarea {
   opacity: 0.45;
   cursor: not-allowed;
   pointer-events: none;
@@ -300,8 +301,15 @@ main {
   max-width: 140px;
 }
 
+/* ── MQTT prefix row — hidden unless broker is configured ────────────────── */
+/* body.mqtt-enabled is set by loadConfig() so all rows update without        */
+/* re-rendering cards.                                                         */
 .mqtt-prefix-row {
+  display: none;
   margin: 8px 0 4px;
+}
+body.mqtt-enabled .mqtt-prefix-row {
+  display: block;
 }
 .mqtt-prefix-row label {
   display: flex;
