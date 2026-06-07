@@ -77,7 +77,7 @@ const state = {
   authed: false,
   passwordConfigured: false,
   mqttConfigured: false,
-  mqttTopicPrefix: '', // global default; overwritten by /api/config
+  mqttTopicPrefix: 'ubersdr', // global default; overwritten by /api/config
 };
 
 // ---------------------------------------------------------------------------
@@ -338,8 +338,8 @@ function initAddPanel() {
 
   // Frequency preset dropdown — populates freq + mode fields
   // Split MQTT topic field: read-only prefix badge + editable suffix input.
-  // The badge shows the global prefix from the server config (MQTT_TOPIC_PREFIX).
-  // Only the suffix is stored per-channel; the prefix is always server-side.
+  // The badge shows the global prefix from the server config (MQTT_TOPIC_PREFIX env,
+  // default "ubersdr"). Only the suffix is stored per-channel; the prefix is server-side.
   // The suffix auto-populates from the channel name/label as the user types,
   // unless they've manually edited it.
   const mqttSuffixEl = document.getElementById('add-mqtt-suffix');
@@ -1598,6 +1598,8 @@ function renderChannelCard(ch) {
     updateMqttBadge();
   };
 
+  card._updateMqttBadge = updateMqttBadge;
+
   return card;
 }
 
@@ -1696,7 +1698,7 @@ async function loadConfig() {
     if (!resp.ok) return;
     const cfg = await resp.json();
     state.mqttConfigured = !!cfg.mqtt_configured;
-    state.mqttTopicPrefix = cfg.mqtt_topic_prefix || '';
+    state.mqttTopicPrefix = cfg.mqtt_topic_prefix || 'ubersdr';
     // Body class drives CSS visibility of all MQTT rows (add-channel form
     // and per-channel config panes) without needing to re-render cards.
     document.body.classList.toggle('mqtt-enabled', state.mqttConfigured);
@@ -1706,6 +1708,11 @@ async function loadConfig() {
     // Update the add-panel prefix badge to show the real configured prefix.
     const badge = document.getElementById('add-mqtt-prefix-badge');
     if (badge) badge.textContent = state.mqttTopicPrefix + '/';
+    // Refresh MQTT badges on all existing channel cards so they show the
+    // correct full topic (prefix/suffix) immediately after config loads.
+    document.querySelectorAll('.channel-card').forEach(card => {
+      if (card._updateMqttBadge) card._updateMqttBadge();
+    });
   } catch (e) {
     console.warn('loadConfig:', e);
   }

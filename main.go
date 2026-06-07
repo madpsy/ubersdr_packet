@@ -22,7 +22,7 @@
 //	MQTT_USER             MQTT username
 //	MQTT_PASS             MQTT password
 //	MQTT_TLS_SKIP_VERIFY  Set to "true" to skip TLS certificate verification
-//	MQTT_TOPIC_PREFIX     Default MQTT topic prefix (no default; required for MQTT publishing)
+//	MQTT_TOPIC_PREFIX     Default MQTT topic prefix (default: "ubersdr")
 //
 // Equivalent CLI flags (run with -help for full list):
 //
@@ -522,7 +522,7 @@ func main() {
 		mqttUser          = flag.String("mqtt-user", envOr("MQTT_USER", ""), "MQTT username (env: MQTT_USER)")
 		mqttPass          = flag.String("mqtt-pass", envOr("MQTT_PASS", ""), "MQTT password (env: MQTT_PASS)")
 		mqttTLSSkipVerify = flag.Bool("mqtt-tls-skip-verify", envOr("MQTT_TLS_SKIP_VERIFY", "") == "true", "Skip TLS certificate verification for MQTT (env: MQTT_TLS_SKIP_VERIFY)")
-		mqttTopicPrefix   = flag.String("mqtt-topic-prefix", envOr("MQTT_TOPIC_PREFIX", ""), "Default MQTT topic prefix; frames publish to <prefix>/<channel_label> (env: MQTT_TOPIC_PREFIX)")
+		mqttTopicPrefix   = flag.String("mqtt-topic-prefix", envOr("MQTT_TOPIC_PREFIX", "ubersdr"), "Default MQTT topic prefix; frames publish to <prefix>/<channel_label> (env: MQTT_TOPIC_PREFIX)")
 	)
 	flag.Parse()
 
