@@ -58,7 +58,8 @@ COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh \
     && mkdir -p /data \
     && useradd -r -s /bin/false packet \
-    && chown packet:packet /data
+    && chown packet:packet /data \
+    && chmod 777 /data
 
 USER packet
 

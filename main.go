@@ -50,12 +50,13 @@ func envIntOr(key string, def int) int {
 // ---------------------------------------------------------------------------
 
 type channelConfig struct {
-	ID          string            `json:"id"`
-	FreqHz      int               `json:"freq_hz"`
-	Mode        string            `json:"mode"`
-	Name        string            `json:"name,omitempty"`
-	BandwidthHz int               `json:"bandwidth_hz,omitempty"`
-	SMConfig    SMConfig          `json:"modem_config"`
+	ID               string   `json:"id"`
+	FreqHz           int      `json:"freq_hz"`
+	Mode             string   `json:"mode"`
+	Name             string   `json:"name,omitempty"`
+	BandwidthHz      int      `json:"bandwidth_hz,omitempty"`
+	SMConfig         SMConfig `json:"modem_config"`
+	MQTTTopicPrefix  string   `json:"mqtt_topic_prefix,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -70,23 +71,25 @@ type packetChannel struct {
 	resultChan chan []byte
 	audioChan  chan AudioSample
 
-	mu     sync.Mutex
-	smCfg  SMConfig
+	mu              sync.Mutex
+	smCfg           SMConfig
+	mqttTopicPrefix string
 
 	// Audio tap — fan-out raw PCM bytes to preview listeners.
 	tapMu   sync.RWMutex
 	tapSubs map[chan []byte]struct{}
 }
 
-func newPacketChannel(inst *instance, cfg SMConfig, channelID string) *packetChannel {
+func newPacketChannel(inst *instance, cfg SMConfig, channelID, mqttTopicPrefix string) *packetChannel {
 	return &packetChannel{
-		inst:       inst,
-		label:      inst.label,
-		channelID:  channelID,
-		resultChan: make(chan []byte, 256),
-		audioChan:  make(chan AudioSample, 1024),
-		smCfg:      cfg,
-		tapSubs:    make(map[chan []byte]struct{}),
+		inst:            inst,
+		label:           inst.label,
+		channelID:       channelID,
+		resultChan:      make(chan []byte, 256),
+		audioChan:       make(chan AudioSample, 1024),
+		smCfg:           cfg,
+		mqttTopicPrefix: mqttTopicPrefix,
+		tapSubs:         make(map[chan []byte]struct{}),
 	}
 }
 
@@ -121,7 +124,7 @@ func (pc *packetChannel) tapBroadcast(pcmBytes []byte) {
 }
 
 // start launches the UberSDR connection and the QtSoundModem decoder.
-func (pc *packetChannel) start(ctx context.Context, hub *sseHub) error {
+func (pc *packetChannel) start(ctx context.Context, hub *sseHub, mq *mqttClient) error {
 	decoder, err := NewSoundModemDecoder(pc.smCfg)
 	if err != nil {
 		return fmt.Errorf("create decoder: %w", err)
@@ -132,7 +135,7 @@ func (pc *packetChannel) start(ctx context.Context, hub *sseHub) error {
 		return fmt.Errorf("start decoder: %w", err)
 	}
 
-	// Forward decoded frames to the SSE hub.
+	// Forward decoded frames to the SSE hub and optionally MQTT.
 	go func() {
 		for {
 			select {
@@ -143,6 +146,11 @@ func (pc *packetChannel) start(ctx context.Context, hub *sseHub) error {
 					return
 				}
 				hub.broadcast(pc.channelID, frame)
+				// Publish raw KISS frame to MQTT if a topic prefix is set.
+				if mq != nil && pc.mqttTopicPrefix != "" {
+					topic := pc.mqttTopicPrefix + "/" + pc.label
+					mq.Publish(topic, frame)
+				}
 			case err := <-decoder.CrashChan():
 				log.Printf("[%s] modem crashed: %v", pc.label, err)
 				hub.broadcastError(pc.channelID, fmt.Sprintf("modem crashed: %v", err))
@@ -217,21 +225,23 @@ type channelManager struct {
 	ubersdrURL string
 	password   string
 	hub        *sseHub
+	mq         *mqttClient
 	ctx        context.Context
 	configPath string
 }
 
-func newChannelManager(ctx context.Context, ubersdrURL, password string, hub *sseHub, configPath string) *channelManager {
+func newChannelManager(ctx context.Context, ubersdrURL, password string, hub *sseHub, mq *mqttClient, configPath string) *channelManager {
 	return &channelManager{
 		ubersdrURL: ubersdrURL,
 		password:   password,
 		hub:        hub,
+		mq:         mq,
 		ctx:        ctx,
 		configPath: configPath,
 	}
 }
 
-func (m *channelManager) add(freqHz int, mode, name, channelID string, bwHz int, smCfg SMConfig) (*packetChannel, error) {
+func (m *channelManager) add(freqHz int, mode, name, channelID string, bwHz int, smCfg SMConfig, mqttTopicPrefix string) (*packetChannel, error) {
 	label := name
 	if label == "" {
 		label = fmt.Sprintf("%d_%s", freqHz, mode)
@@ -252,9 +262,9 @@ func (m *channelManager) add(freqHz int, mode, name, channelID string, bwHz int,
 	smCfg.SampleRate = 0 // will be set from stream on first packet
 
 	inst := newInstance(freqHz, 0, mode, m.ubersdrURL, m.password, name, bwHz)
-	pc := newPacketChannel(inst, smCfg, channelID)
+	pc := newPacketChannel(inst, smCfg, channelID, mqttTopicPrefix)
 
-	if err := pc.start(m.ctx, m.hub); err != nil {
+	if err := pc.start(m.ctx, m.hub, m.mq); err != nil {
 		return nil, fmt.Errorf("start channel: %w", err)
 	}
 
@@ -308,13 +318,17 @@ func (m *channelManager) save() {
 		if ch.label != autoLabel {
 			name = ch.label
 		}
+		ch.mu.Lock()
+		mqttPrefix := ch.mqttTopicPrefix
+		ch.mu.Unlock()
 		cfgs = append(cfgs, channelConfig{
-			ID:          ch.channelID,
-			FreqHz:      ch.inst.freqHz,
-			Mode:        ch.inst.audioMode,
-			Name:        name,
-			BandwidthHz: ch.inst.getBandwidth(),
-			SMConfig:    ch.getSMConfig(),
+			ID:              ch.channelID,
+			FreqHz:          ch.inst.freqHz,
+			Mode:            ch.inst.audioMode,
+			Name:            name,
+			BandwidthHz:     ch.inst.getBandwidth(),
+			SMConfig:        ch.getSMConfig(),
+			MQTTTopicPrefix: mqttPrefix,
 		})
 	}
 	m.mu.RUnlock()
@@ -355,7 +369,7 @@ func (m *channelManager) load() {
 		return
 	}
 	for _, cfg := range cfgs {
-		if _, err := m.add(cfg.FreqHz, cfg.Mode, cfg.Name, cfg.ID, cfg.BandwidthHz, cfg.SMConfig); err != nil {
+		if _, err := m.add(cfg.FreqHz, cfg.Mode, cfg.Name, cfg.ID, cfg.BandwidthHz, cfg.SMConfig, cfg.MQTTTopicPrefix); err != nil {
 			log.Printf("[manager] load: %v", err)
 		}
 	}
@@ -376,6 +390,11 @@ func main() {
 			"Password for write actions in the web UI (env: UI_PASSWORD)")
 		replayBuf = flag.Int("replay-buf", envIntOr("REPLAY_BUF_SIZE", 200),
 			"Number of recent AX.25 frames buffered per channel for late-joining browsers (env: REPLAY_BUF_SIZE)")
+		// MQTT flags
+		mqttBroker        = flag.String("mqtt-broker", envOr("MQTT_BROKER", ""), "MQTT broker URL, e.g. tcp://host:1883 or ssl://host:8883 (env: MQTT_BROKER)")
+		mqttUser          = flag.String("mqtt-user", envOr("MQTT_USER", ""), "MQTT username (env: MQTT_USER)")
+		mqttPass          = flag.String("mqtt-pass", envOr("MQTT_PASS", ""), "MQTT password (env: MQTT_PASS)")
+		mqttTLSSkipVerify = flag.Bool("mqtt-tls-skip-verify", envOr("MQTT_TLS_SKIP_VERIFY", "") == "true", "Skip TLS certificate verification for MQTT (env: MQTT_TLS_SKIP_VERIFY)")
 	)
 	flag.Parse()
 
@@ -396,16 +415,34 @@ func main() {
 	log.Printf("[main] Listen addr:  %s", *listenAddr)
 	log.Printf("[main] Data dir:     %s", *dataDir)
 
+	// Connect to MQTT broker if configured.
+	var mq *mqttClient
+	if *mqttBroker != "" {
+		log.Printf("[main] MQTT broker:  %s", *mqttBroker)
+		var err error
+		mq, err = newMQTTClient(MQTTConfig{
+			Broker:        *mqttBroker,
+			Username:      *mqttUser,
+			Password:      *mqttPass,
+			TLSSkipVerify: *mqttTLSSkipVerify,
+		})
+		if err != nil {
+			log.Fatalf("[main] MQTT connect: %v", err)
+		}
+		defer mq.Close()
+	}
+
 	hub := newSSEHub(*replayBuf)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	mgr := newChannelManager(ctx, *ubersdrURL, *password, hub, configPath)
+	mqttConfigured := *mqttBroker != ""
+	mgr := newChannelManager(ctx, *ubersdrURL, *password, hub, mq, configPath)
 	mgr.load()
 
 	go func() {
-		if err := startHTTPServer(*listenAddr, mgr, hub, *uiPassword); err != nil {
+		if err := startHTTPServer(*listenAddr, mgr, hub, *uiPassword, mqttConfigured); err != nil {
 			log.Fatalf("[main] HTTP server: %v", err)
 		}
 	}()

@@ -2,13 +2,17 @@
 # entrypoint.sh — translate environment variables into ubersdr-packet flags
 #
 # Environment variables:
-#   UBERSDR_URL      UberSDR WebSocket URL (required)
-#   UBERSDR_PASS     UberSDR bypass password (optional)
-#   UI_PASSWORD      Password for write actions in the web UI (optional)
-#   WEB_PORT         Port for the web UI server (default: 6089)
-#   DATA_DIR         Directory for channels.json (default: /data)
-#   REPLAY_BUF_SIZE  Number of recent AX.25 frames buffered per channel for
-#                    late-joining browsers (default: 200; set 0 to disable)
+#   UBERSDR_URL           UberSDR WebSocket URL (required)
+#   UBERSDR_PASS          UberSDR bypass password (optional)
+#   UI_PASSWORD           Password for write actions in the web UI (optional)
+#   WEB_PORT              Port for the web UI server (default: 6089)
+#   DATA_DIR              Directory for channels.json (default: /data)
+#   REPLAY_BUF_SIZE       Recent AX.25 frames replayed to late-joining browsers
+#                         (default: 200; set 0 to disable)
+#   MQTT_BROKER           MQTT broker URL, e.g. tcp://host:1883 or ssl://host:8883
+#   MQTT_USER             MQTT username (optional)
+#   MQTT_PASS             MQTT password (optional)
+#   MQTT_TLS_SKIP_VERIFY  Set to "true" to skip TLS certificate verification
 
 set -e
 
@@ -18,6 +22,12 @@ args=""
 [ -n "$UBERSDR_PASS"    ] && args="$args -password $UBERSDR_PASS"
 [ -n "$UI_PASSWORD"     ] && args="$args -ui-password $UI_PASSWORD"
 [ -n "$REPLAY_BUF_SIZE" ] && args="$args -replay-buf $REPLAY_BUF_SIZE"
+
+# MQTT
+[ -n "$MQTT_BROKER"           ] && args="$args -mqtt-broker $MQTT_BROKER"
+[ -n "$MQTT_USER"             ] && args="$args -mqtt-user $MQTT_USER"
+[ -n "$MQTT_PASS"             ] && args="$args -mqtt-pass $MQTT_PASS"
+[ "$MQTT_TLS_SKIP_VERIFY" = "true" ] && args="$args -mqtt-tls-skip-verify"
 
 DATA_DIR="${DATA_DIR:-/data}"
 args="$args -data $DATA_DIR"

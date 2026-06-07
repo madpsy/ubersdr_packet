@@ -99,6 +99,7 @@ echo "UI_PASSWORD set in ${COMPOSE_FILE}"
 # ---------------------------------------------------------------------------
 
 mkdir -p "${INSTALL_DIR}/data"
+chmod 777 "${INSTALL_DIR}/data"
 echo "Data directory ready: ${INSTALL_DIR}/data"
 
 # ---------------------------------------------------------------------------

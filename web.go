@@ -197,7 +197,7 @@ func requiresAuth(w http.ResponseWriter, r *http.Request, uiPassword string, ses
 // HTTP server
 // ---------------------------------------------------------------------------
 
-func startHTTPServer(listenAddr string, mgr *channelManager, hub *sseHub, uiPassword string) error {
+func startHTTPServer(listenAddr string, mgr *channelManager, hub *sseHub, uiPassword string, mqttConfigured bool) error {
 	sessions := newSessionStore()
 	mux := http.NewServeMux()
 
@@ -279,6 +279,19 @@ func startHTTPServer(listenAddr string, mgr *channelManager, hub *sseHub, uiPass
 	})
 
 	// -----------------------------------------------------------------------
+	// GET /api/config — server-side feature flags (e.g. MQTT configured)
+	// -----------------------------------------------------------------------
+	mux.HandleFunc("/api/config", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		writeJSON(w, map[string]interface{}{
+			"mqtt_configured": mqttConfigured,
+		})
+	})
+
+	// -----------------------------------------------------------------------
 	// GET /api/channels — list all channels
 	// POST /api/channels — add a channel (auth required)
 	// -----------------------------------------------------------------------
@@ -297,11 +310,12 @@ func startHTTPServer(listenAddr string, mgr *channelManager, hub *sseHub, uiPass
 				return
 			}
 			var body struct {
-				FreqHz      int      `json:"freq_hz"`
-				Mode        string   `json:"mode"`
-				Name        string   `json:"name"`
-				BandwidthHz int      `json:"bandwidth_hz"`
-				SMConfig    SMConfig `json:"modem_config"`
+				FreqHz          int      `json:"freq_hz"`
+				Mode            string   `json:"mode"`
+				Name            string   `json:"name"`
+				BandwidthHz     int      `json:"bandwidth_hz"`
+				SMConfig        SMConfig `json:"modem_config"`
+				MQTTTopicPrefix string   `json:"mqtt_topic_prefix"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				http.Error(w, `{"error":"bad request"}`, http.StatusBadRequest)
@@ -331,7 +345,7 @@ func startHTTPServer(listenAddr string, mgr *channelManager, hub *sseHub, uiPass
 				body.SMConfig = defaultSMConfig(0)
 			}
 
-			pc, err := mgr.add(body.FreqHz, body.Mode, body.Name, "", body.BandwidthHz, body.SMConfig)
+			pc, err := mgr.add(body.FreqHz, body.Mode, body.Name, "", body.BandwidthHz, body.SMConfig, body.MQTTTopicPrefix)
 			if err != nil {
 				http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusConflict)
 				return
@@ -600,14 +614,16 @@ func startHTTPServer(listenAddr string, mgr *channelManager, hub *sseHub, uiPass
 func channelSnapshot(ch *packetChannel) map[string]interface{} {
 	ch.mu.Lock()
 	smCfg := ch.smCfg
+	mqttPrefix := ch.mqttTopicPrefix
 	ch.mu.Unlock()
 
 	instSnap := ch.inst.statusSnapshot()
 
 	return map[string]interface{}{
-		"id":           ch.channelID,
-		"label":        ch.label,
-		"modem_config": smCfg,
-		"instance":     instSnap,
+		"id":                ch.channelID,
+		"label":             ch.label,
+		"modem_config":      smCfg,
+		"instance":          instSnap,
+		"mqtt_topic_prefix": mqttPrefix,
 	}
 }

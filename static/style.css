@@ -245,6 +245,16 @@ main {
 }
 .channel-status-badge.running { color: var(--green); border-color: var(--green); }
 .channel-status-badge.reconnecting { color: var(--yellow); border-color: var(--yellow); }
+.channel-mqtt-badge {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  background: rgba(100, 180, 255, 0.08);
+  white-space: nowrap;
+  font-family: monospace;
+}
 
 .dcd-indicators {
   display: flex;

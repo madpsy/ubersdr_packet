@@ -76,6 +76,7 @@ const MAX_LOG      = 300;
 const state = {
   authed: false,
   passwordConfigured: false,
+  mqttConfigured: false,
 };
 
 // ---------------------------------------------------------------------------
@@ -364,10 +365,13 @@ function initAddPanel() {
 
     const modemChannels = readModemChannels(grid);
     const body = {
-      freq_hz:      freqHz,
-      mode:         document.getElementById('add-mode').value,
-      name:         document.getElementById('add-name').value.trim(),
-      bandwidth_hz: parseInt(document.getElementById('add-bw').value) || 0,
+      freq_hz:           freqHz,
+      mode:              document.getElementById('add-mode').value,
+      name:              document.getElementById('add-name').value.trim(),
+      bandwidth_hz:      parseInt(document.getElementById('add-bw').value) || 0,
+      mqtt_topic_prefix: state.mqttConfigured
+        ? (document.getElementById('add-mqtt-prefix').value.trim())
+        : '',
       modem_config: {
         sample_rate:   0,
         dcd_threshold: 20,
@@ -391,6 +395,8 @@ function initAddPanel() {
       document.getElementById('add-freq').value = '';
       document.getElementById('add-name').value = '';
       document.getElementById('add-bw').value = '0';
+      const mqttPrefixEl = document.getElementById('add-mqtt-prefix');
+      if (mqttPrefixEl) mqttPrefixEl.value = '';
       loadChannels();
     } catch (e) {
       alert('Error: ' + e.message);
@@ -625,7 +631,7 @@ function attachWaterfall(wfWrap, label, channelFreqs) {
   ro.observe(wfBody);
 
   // Web Audio setup
-  let audioCtx = null, analyser = null, source = null, fftBuf = null;
+  let audioCtx = null, analyser = null, gainNode = null, source = null, fftBuf = null;
   let audioEl = null;
   let wfLastLineAt = 0, wfRafId = null, stopped = false;
 
@@ -671,7 +677,13 @@ function attachWaterfall(wfWrap, label, channelFreqs) {
       analyser = audioCtx.createAnalyser();
       analyser.fftSize = 2048;
       analyser.smoothingTimeConstant = 0.6;
-      analyser.connect(audioCtx.destination);
+
+      // GainNode sits between analyser and destination so we can silence
+      // output (gain=0) without disrupting the analyser's data feed.
+      gainNode = audioCtx.createGain();
+      gainNode.gain.value = 0.8;
+      analyser.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
 
       // Point an <audio> element directly at the streaming WAV URL.
       // Browsers handle streaming WAV natively; MediaSource does not support
@@ -679,7 +691,6 @@ function attachWaterfall(wfWrap, label, channelFreqs) {
       audioEl = document.createElement('audio');
       audioEl.src = BASE + '/api/audio/' + encodeURIComponent(label);
       audioEl.crossOrigin = 'anonymous';
-      audioEl.volume = 0.8;
 
       source = audioCtx.createMediaElementSource(audioEl);
       source.connect(analyser);
@@ -701,14 +712,17 @@ function attachWaterfall(wfWrap, label, channelFreqs) {
       ro.disconnect();
       if (source) try { source.disconnect(); } catch(_){}
       if (analyser) try { analyser.disconnect(); } catch(_){}
+      if (gainNode) try { gainNode.disconnect(); } catch(_){}
       if (audioCtx) audioCtx.close().catch(()=>{});
     },
     toggleMute() {
-      if (audioEl) audioEl.muted = !audioEl.muted;
-      return audioEl ? audioEl.muted : false;
+      if (!gainNode) return false;
+      const muted = gainNode.gain.value === 0;
+      gainNode.gain.value = muted ? 0.8 : 0;
+      return !muted; // returns new muted state
     },
     isMuted() {
-      return audioEl ? audioEl.muted : false;
+      return gainNode ? gainNode.gain.value === 0 : false;
     },
     redrawHeader(newChannelFreqs) {
       channelFreqs = newChannelFreqs;
@@ -753,6 +767,10 @@ function renderChannelCard(ch) {
     fmtFreq(ch.instance.freq_hz) + ' ' + ch.instance.audio_mode.toUpperCase());
   const statusBadge = el('span', 'channel-status-badge ' + (ch.instance.status || ''),
     ch.instance.status || 'stopped');
+  // MQTT topic badge — shown when a topic prefix is configured for this channel
+  const mqttBadge = ch.mqtt_topic_prefix
+    ? el('span', 'channel-mqtt-badge', '📡 ' + ch.mqtt_topic_prefix)
+    : null;
 
   const dcdSmCh = (ch.modem_config || {}).channels || [];
 
@@ -812,6 +830,7 @@ function renderChannelCard(ch) {
   hdr.appendChild(labelEl);
   hdr.appendChild(freqEl);
   hdr.appendChild(statusBadge);
+  if (mqttBadge) hdr.appendChild(mqttBadge);
   hdr.appendChild(dcdRow);
   hdr.appendChild(actions);
   card.appendChild(hdr);
@@ -1520,6 +1539,20 @@ function connectSSE() {
 // Init
 // ---------------------------------------------------------------------------
 
+async function loadConfig() {
+  try {
+    const resp = await fetch(BASE + '/api/config');
+    if (!resp.ok) return;
+    const cfg = await resp.json();
+    state.mqttConfigured = !!cfg.mqtt_configured;
+    // Show/hide MQTT topic prefix row in the add-channel form
+    const row = document.getElementById('add-mqtt-prefix-row');
+    if (row) row.classList.toggle('hidden', !state.mqttConfigured);
+  } catch (e) {
+    console.warn('loadConfig:', e);
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   // Expose state globally so card handlers can check auth
   window.state = state;
@@ -1532,6 +1565,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   initAddPanel();
+  loadConfig();
   checkAuth().then(() => loadChannels());
   connectSSE();
 

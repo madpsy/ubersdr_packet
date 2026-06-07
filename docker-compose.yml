@@ -17,6 +17,12 @@ services:
       # UI_PASSWORD: ""          # Set to enable password-protected write actions in the web UI
       # WEB_PORT: "6089"
       # REPLAY_BUF_SIZE: "200"   # Recent AX.25 frames replayed to late-joining browsers (0 to disable)
+      #
+      # MQTT — optional; when set, raw KISS frames are published per channel
+      # MQTT_BROKER: "tcp://mqtt.example.com:1883"   # or ssl://…:8883 for TLS
+      # MQTT_USER: ""
+      # MQTT_PASS: ""
+      # MQTT_TLS_SKIP_VERIFY: "false"   # set "true" to skip TLS cert verification
     networks:
       - sdr-network
     volumes:
