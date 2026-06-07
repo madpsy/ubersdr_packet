@@ -930,6 +930,19 @@ function renderChannelCard(ch) {
   selMax.addEventListener('change', () => { state.filter.maxFrames = parseInt(selMax.value) || 0; renderFrames(); });
 
   const btnClear = el('button', 'btn btn-secondary btn-sm', 'Clear');
+  const btnCopy  = el('button', 'btn btn-secondary btn-sm', 'Copy');
+  btnCopy.title = 'Copy visible frames to clipboard';
+  btnCopy.addEventListener('click', () => {
+    // Collect text from each visible frame row
+    const rows = Array.from(framesList.children);
+    if (!rows.length) return;
+    const text = rows.map(r => r.textContent.replace(/\s+/g, ' ').trim()).join('\n');
+    navigator.clipboard.writeText(text).then(() => {
+      const orig = btnCopy.textContent;
+      btnCopy.textContent = '✔ Copied';
+      setTimeout(() => { btnCopy.textContent = orig; }, 2000);
+    }).catch(err => console.warn('[copy] failed:', err));
+  });
   const countEl = el('span', 'frame-count', '0 frames');
 
   toolbar.appendChild(el('label', 'text-dim', 'Type:'));
@@ -939,6 +952,7 @@ function renderChannelCard(ch) {
   toolbar.appendChild(el('label', 'text-dim', 'Max:'));
   toolbar.appendChild(selMax);
   toolbar.appendChild(btnClear);
+  toolbar.appendChild(btnCopy);
   toolbar.appendChild(countEl);
   framesPane.appendChild(toolbar);
 
