@@ -15,7 +15,7 @@
 //	UBERSDR_PASS          UberSDR bypass password
 //	UI_PASSWORD           Password for write actions in the web UI
 //	WEB_PORT              HTTP listen port (default: 6089)
-//	DATA_DIR              Directory for channels.json (default: ./data)
+//	DATA_DIR              Directory for channels.json (default: /data)
 //	REPLAY_BUF_SIZE       AX.25 frames buffered per channel for late-joining
 //	                      browsers (default: 200)
 //	MQTT_BROKER           MQTT broker URL, e.g. tcp://host:1883
@@ -509,7 +509,7 @@ func main() {
 		ubersdrURL = flag.String("url", envOr("UBERSDR_URL", ""), "UberSDR WebSocket URL (env: UBERSDR_URL)")
 		password   = flag.String("password", envOr("UBERSDR_PASS", ""), "UberSDR password (env: UBERSDR_PASS)")
 		listenAddr = flag.String("listen", ":"+envOr("WEB_PORT", "6089"), "HTTP listen address (env: WEB_PORT)")
-		dataDir    = flag.String("data", envOr("DATA_DIR", "./data"), "Data directory for channels.json (env: DATA_DIR)")
+		dataDir    = flag.String("data", envOr("DATA_DIR", "/data"), "Data directory for channels.json (env: DATA_DIR)")
 		uiPassword = flag.String("ui-password", envOr("UI_PASSWORD", ""),
 			"Password for write actions in the web UI (env: UI_PASSWORD)")
 		replayBuf = flag.Int("replay-buf", envIntOr("REPLAY_BUF_SIZE", 200),
