@@ -12,4 +12,4 @@ echo "Starting ubersdr-packet..."
 docker compose up -d --remove-orphans
 echo "Done."
 echo "  View logs : docker compose logs -f"
-echo "  Web UI    : http://localhost:6096"
+echo "  Web UI    : http://localhost:6089"

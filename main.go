@@ -9,7 +9,7 @@
 // Usage:
 //
 //	ubersdr-packet -url ws://sdr.example.com/ws \
-//	               -listen :6096 \
+//	               -listen :6089 \
 //	               -data /data
 package main
 
@@ -370,7 +370,7 @@ func main() {
 	var (
 		ubersdrURL = flag.String("url", envOr("UBERSDR_URL", ""), "UberSDR WebSocket URL (env: UBERSDR_URL)")
 		password   = flag.String("password", envOr("UBERSDR_PASS", ""), "UberSDR password (env: UBERSDR_PASS)")
-		listenAddr = flag.String("listen", ":"+envOr("WEB_PORT", "6096"), "HTTP listen address (env: WEB_PORT)")
+		listenAddr = flag.String("listen", ":"+envOr("WEB_PORT", "6089"), "HTTP listen address (env: WEB_PORT)")
 		dataDir    = flag.String("data", envOr("DATA_DIR", "./data"), "Data directory for channels.json (env: DATA_DIR)")
 		uiPassword = flag.String("ui-password", envOr("UI_PASSWORD", ""),
 			"Password for write actions in the web UI (env: UI_PASSWORD)")

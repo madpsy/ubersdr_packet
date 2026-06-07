@@ -15,10 +15,10 @@ services:
       # Uncomment and set as needed:
       # UBERSDR_PASS: ""
       # UI_PASSWORD: ""          # Set to enable password-protected write actions in the web UI
-      # WEB_PORT: "6096"
+      # WEB_PORT: "6089"
       # REPLAY_BUF_SIZE: "200"   # Recent AX.25 frames replayed to late-joining browsers (0 to disable)
     ports:
-      - "6096:6096"
+      - "6089:6089"
     networks:
       - sdr-network
     volumes:

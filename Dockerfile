@@ -66,9 +66,9 @@ WORKDIR /app
 
 VOLUME ["/data"]
 
-EXPOSE 6096
+EXPOSE 6089
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD ["/usr/bin/wget", "-q", "-O", "/dev/null", "http://localhost:6096/"]
+    CMD ["/usr/bin/wget", "-q", "-O", "/dev/null", "http://localhost:6089/"]
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

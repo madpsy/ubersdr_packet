@@ -108,7 +108,7 @@ run_image() {
     docker run --rm -it \
         --platform "$PLATFORM" \
         --shm-size=256m \
-        -p "${WEB_PORT:-6096}:${WEB_PORT:-6096}" \
+        -p "${WEB_PORT:-6089}:${WEB_PORT:-6089}" \
         "${args[@]}" \
         "$IMAGE" \
         "$@"
@@ -121,7 +121,7 @@ run_image() {
 #   UBERSDR_URL   UberSDR WebSocket URL (required)
 #   UBERSDR_PASS  UberSDR bypass password (optional)
 #   UI_PASSWORD   Password for write actions in the web UI (optional)
-#   WEB_PORT      Web UI port (default: 6096)
+#   WEB_PORT      Web UI port (default: 6089)
 #   DATA_DIR      Directory for channels.json (default: /data)
 
 # ---------------------------------------------------------------------------
