@@ -626,6 +626,7 @@ function attachWaterfall(wfWrap, label, channelFreqs) {
 
   // Web Audio setup
   let audioCtx = null, analyser = null, source = null, fftBuf = null;
+  let audioEl = null;
   let wfLastLineAt = 0, wfRafId = null, stopped = false;
 
   function renderLine() {
@@ -675,7 +676,7 @@ function attachWaterfall(wfWrap, label, channelFreqs) {
       // Point an <audio> element directly at the streaming WAV URL.
       // Browsers handle streaming WAV natively; MediaSource does not support
       // audio/wav in Firefox so we avoid it entirely.
-      const audioEl = document.createElement('audio');
+      audioEl = document.createElement('audio');
       audioEl.src = BASE + '/api/audio/' + encodeURIComponent(label);
       audioEl.crossOrigin = 'anonymous';
       audioEl.volume = 0.8;
@@ -701,6 +702,13 @@ function attachWaterfall(wfWrap, label, channelFreqs) {
       if (source) try { source.disconnect(); } catch(_){}
       if (analyser) try { analyser.disconnect(); } catch(_){}
       if (audioCtx) audioCtx.close().catch(()=>{});
+    },
+    toggleMute() {
+      if (audioEl) audioEl.muted = !audioEl.muted;
+      return audioEl ? audioEl.muted : false;
+    },
+    isMuted() {
+      return audioEl ? audioEl.muted : false;
     },
     redrawHeader(newChannelFreqs) {
       channelFreqs = newChannelFreqs;
@@ -827,18 +835,29 @@ function renderChannelCard(ch) {
 
   const wfBtnRow = el('div', 'wf-btn-row');
   const btnPreview = el('button', 'btn btn-secondary btn-sm', '▶ Preview');
+  const btnMute = el('button', 'btn btn-secondary btn-sm wf-mute-btn', '🔇 Mute');
+  btnMute.style.display = 'none';
   btnPreview.addEventListener('click', () => {
     if (wfHandle) {
       wfHandle.stop();
       wfHandle = null;
       wfWrap.innerHTML = '';
       btnPreview.textContent = '▶ Preview';
+      btnMute.style.display = 'none';
+      btnMute.textContent = '🔇 Mute';
     } else {
       btnPreview.textContent = '◼ Stop';
       wfHandle = attachWaterfall(wfWrap, ch.label, getChannelFreqs());
+      btnMute.style.display = '';
     }
   });
+  btnMute.addEventListener('click', () => {
+    if (!wfHandle) return;
+    const nowMuted = wfHandle.toggleMute();
+    btnMute.textContent = nowMuted ? '🔊 Unmute' : '🔇 Mute';
+  });
   wfBtnRow.appendChild(btnPreview);
+  wfBtnRow.appendChild(btnMute);
   wfSection.appendChild(wfBtnRow);
   wfSection.appendChild(wfWrap);
 
