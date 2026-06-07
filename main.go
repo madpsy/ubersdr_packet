@@ -169,10 +169,13 @@ func (pc *packetChannel) start(ctx context.Context, hub *sseHub, mq *mqttClient,
 					return
 				}
 				hub.broadcast(pc.channelID, frame)
-				// Publish raw KISS frame to MQTT.
-				// Use per-channel prefix if set, otherwise fall back to the
-				// global default prefix supplied via -mqtt-topic-prefix flag.
-				if mq != nil {
+				// Publish a KISS-framed AX.25 packet to MQTT.
+				// Only MsgPacket frames carry actual decoded AX.25 data;
+				// MsgDCD / MsgMonitor / MsgLog are UI-only and must not be
+				// forwarded to MQTT.
+				// Internal wire format: [MsgPacket][kissPort][len 4B][ax25...]
+				// KISS frame format:    0xC0 (port<<4)|0x00 <ax25> 0xC0
+				if mq != nil && len(frame) >= 6 && frame[0] == MsgPacket {
 					pc.mu.Lock()
 					prefix := pc.mqttTopicPrefix
 					pc.mu.Unlock()
@@ -180,8 +183,15 @@ func (pc *packetChannel) start(ctx context.Context, hub *sseHub, mq *mqttClient,
 						prefix = defaultPrefix
 					}
 					if prefix != "" {
+						kissPort := frame[1]
+						ax25 := frame[6:]
+						kissFrame := make([]byte, 3+len(ax25))
+						kissFrame[0] = 0xC0
+						kissFrame[1] = (kissPort << 4) | 0x00 // data frame, port N
+						copy(kissFrame[2:], ax25)
+						kissFrame[2+len(ax25)] = 0xC0
 						topic := prefix + "/" + pc.label
-						mq.Publish(topic, frame)
+						mq.Publish(topic, kissFrame)
 					}
 				}
 			case crashErr := <-decoder.CrashChan():
