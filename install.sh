@@ -2,7 +2,7 @@
 # install.sh — fetch the docker-compose.yml from the ubersdr-packet repo and start the service
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/madpsy/ubersdr-packet/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/madpsy/ubersdr_packet/main/install.sh | bash
 #   — or —
 #   ./install.sh [--force-update]
 #
@@ -14,7 +14,7 @@
 
 set -euo pipefail
 
-REPO_RAW="https://raw.githubusercontent.com/madpsy/ubersdr-packet/main"
+REPO_RAW="https://raw.githubusercontent.com/madpsy/ubersdr_packet/main"
 INSTALL_DIR="${HOME}/ubersdr/packet"
 COMPOSE_FILE="docker-compose.yml"
 FORCE_UPDATE="${FORCE_UPDATE:-0}"
