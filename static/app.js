@@ -1733,7 +1733,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Load config (sets state.mqttConfigured etc.) and auth status before
   // rendering channels so the config pane has the correct feature flags.
   await Promise.all([loadConfig(), checkAuth()]);
-  loadChannels();
+  await loadChannels();
   connectSSE();
 
   // Refresh channel status every 10 s
