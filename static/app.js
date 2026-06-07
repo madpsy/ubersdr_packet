@@ -10,46 +10,43 @@ const BASE = (window.BASE_PATH || '').replace(/\/$/, '');
 // Constants
 // ---------------------------------------------------------------------------
 
+// Modem type labels — must match the extension's template.html option values exactly.
 const MODEM_LABELS = [
-  'AFSK 300 bd',    // 0
-  'AFSK 1200 bd',   // 1
-  'AFSK 2400 bd',   // 2
-  'AFSK 4800 bd',   // 3
-  'BPSK 1200 bd',   // 4
-  'BPSK 2400 bd',   // 5
-  'BPSK 4800 bd',   // 6
-  'QPSK 2400 bd',   // 7
-  'QPSK 4800 bd',   // 8
-  'QPSK 9600 bd',   // 9
-  'BPSK 300 bd',    // 10
-  '8PSK 4800 bd',   // 11
-  '8PSK 9600 bd',   // 12
-  'MFSK 16',        // 13
-  'MFSK 32',        // 14
-  'MFSK 64',        // 15
-  'MFSK 128',       // 16
-  'DTMF',           // 17
-  'AFSK 9600 bd',   // 18
-  'AFSK 19200 bd',  // 19
+  'AFSK AX.25 300bd',           // 0
+  'AFSK AX.25 1200bd (Bell 202)', // 1
+  'AFSK AX.25 600bd',           // 2
+  'AFSK AX.25 2400bd',          // 3
+  'BPSK AX.25 1200bd',          // 4
+  'BPSK AX.25 600bd',           // 5
+  'BPSK AX.25 300bd',           // 6
+  'BPSK AX.25 2400bd',          // 7
+  'QPSK AX.25 4800bd',          // 8
+  'QPSK AX.25 3600bd',          // 9
+  'QPSK AX.25 2400bd',          // 10
+  'BPSK FEC 4×100bd',           // 11
+  'DW QPSK V26A 2400bd',        // 12
+  'DW 8PSK V27 4800bd',         // 13
+  'DW QPSK V26B 2400bd',        // 14
+  'ARDOP Packet',               // 15
 ];
 
-// RX_SHIFT: half-bandwidth in Hz per modem index (from QtSoundModem sm_main.c)
+// RX_SHIFT: approximate half-bandwidth in Hz per modem index (from QtSoundModem sm_main.c)
 // Used to draw channel bandwidth bars on the waterfall.
 const RX_SHIFT = [
-  200,   // 0  AFSK 300 bd
-  1000,  // 1  AFSK 1200 bd (Bell 202)
-  450,   // 2  AFSK 600 bd
-  1805,  // 3  AFSK 2400 bd
-  1200,  // 4  BPSK 1200 bd
-  600,   // 5  BPSK 600 bd
-  300,   // 6  BPSK 300 bd
-  2400,  // 7  BPSK 2400 bd
-  2400,  // 8  QPSK 4800 bd
-  1800,  // 9  QPSK 3600 bd
-  1200,  // 10 QPSK 2400 bd
+  200,   // 0  AFSK 300bd
+  1000,  // 1  AFSK 1200bd (Bell 202)
+  450,   // 2  AFSK 600bd
+  1805,  // 3  AFSK 2400bd
+  600,   // 4  BPSK 1200bd
+  300,   // 5  BPSK 600bd
+  150,   // 6  BPSK 300bd
+  1200,  // 7  BPSK 2400bd
+  2400,  // 8  QPSK 4800bd
+  1800,  // 9  QPSK 3600bd
+  1200,  // 10 QPSK 2400bd
   525,   // 11 BPSK FEC
   1200,  // 12 DW QPSK V26A
-  1600,  // 13 DW 8PSK V27
+  2400,  // 13 DW 8PSK V27
   1200,  // 14 DW QPSK V26B
   500,   // 15 ARDOP
 ];
@@ -197,12 +194,8 @@ function checkAuth() {
 
 const FREQ_PRESETS = [
   { label: '— Select a preset —', value: '' },
-  { group: 'UK Packet', options: [
+  { group: 'HF Packet', options: [
     { label: '7.049.45 MHz USB (UK Packet)', freq: 7049450, mode: 'usb' },
-  ]},
-  { group: 'VHF/UHF Packet', options: [
-    { label: '144.800 MHz USB (APRS EU)', freq: 144800000, mode: 'usb' },
-    { label: '144.390 MHz USB (APRS NA)', freq: 144390000, mode: 'usb' },
   ]},
 ];
 
@@ -211,10 +204,10 @@ const FREQ_PRESETS = [
 //   Ch B: BPSK 300bd (modem 6), freq 850, FX.25 on, IL2P+CRC, enabled
 //   Ch C/D: disabled
 const DEFAULT_MODEM_CHANNELS = [
-  { enabled: true,  modem: 0, freq: 850, rcvr_pairs: 0, fx25: 1, il2p: 2 },
-  { enabled: true,  modem: 6, freq: 850, rcvr_pairs: 0, fx25: 1, il2p: 2 },
-  { enabled: false, modem: 0, freq: 850, rcvr_pairs: 0, fx25: 1, il2p: 2 },
-  { enabled: false, modem: 0, freq: 850, rcvr_pairs: 0, fx25: 1, il2p: 2 },
+  { enabled: true,  modem: 0, freq: 850,  rcvr_pairs: 0, fx25: 1, il2p: 2 },
+  { enabled: true,  modem: 6, freq: 2150, rcvr_pairs: 0, fx25: 1, il2p: 2 },
+  { enabled: false, modem: 0, freq: 850,  rcvr_pairs: 0, fx25: 1, il2p: 2 },
+  { enabled: false, modem: 0, freq: 850,  rcvr_pairs: 0, fx25: 1, il2p: 2 },
 ];
 
 // ---------------------------------------------------------------------------
@@ -256,14 +249,14 @@ function buildModemChannelCard(idx, cfg) {
   MODEM_LABELS.forEach((name, i) => {
     const o = document.createElement('option');
     o.value = i; o.textContent = name;
-    if (i === (cfg.modem || 1)) o.selected = true;
+    if (i === (cfg.modem ?? 0)) o.selected = true;
     selModem.appendChild(o);
   });
   row('Modem type', selModem);
 
   const inpFreq = document.createElement('input');
   inpFreq.type = 'number';
-  inpFreq.value = cfg.freq || 1700;
+  inpFreq.value = cfg.freq ?? 850;
   inpFreq.min = 100; inpFreq.max = 24000;
   row('Centre freq (Hz)', inpFreq);
 
@@ -668,40 +661,13 @@ function attachWaterfall(wfWrap, label, channelFreqs) {
       analyser.smoothingTimeConstant = 0.6;
       analyser.connect(audioCtx.destination);
 
-      const resp = await fetch(BASE + '/api/audio/' + encodeURIComponent(label));
-      if (!resp.ok || !resp.body) throw new Error('stream unavailable');
-
-      const mediaSource = audioCtx.createMediaStreamSource
-        ? null  // not used — we use MediaSource / decodeAudioData approach below
-        : null;
-
-      // Use a ScriptProcessorNode-free approach: pump the fetch stream through
-      // a MediaSource → <audio> element → MediaElementSourceNode → AnalyserNode.
-      const ms = new MediaSource();
+      // Point an <audio> element directly at the streaming WAV URL.
+      // Browsers handle streaming WAV natively; MediaSource does not support
+      // audio/wav in Firefox so we avoid it entirely.
       const audioEl = document.createElement('audio');
-      audioEl.src = URL.createObjectURL(ms);
-      audioEl.muted = false;  // audible preview
+      audioEl.src = BASE + '/api/audio/' + encodeURIComponent(label);
+      audioEl.crossOrigin = 'anonymous';
       audioEl.volume = 0.8;
-
-      ms.addEventListener('sourceopen', async () => {
-        const sb = ms.addSourceBuffer('audio/wav');
-        sb.mode = 'sequence';
-        const reader = resp.body.getReader();
-        const pump = async () => {
-          if (stopped) return;
-          const { done, value } = await reader.read();
-          if (done || stopped) { try { ms.endOfStream(); } catch(_){} return; }
-          if (!sb.updating) {
-            sb.appendBuffer(value);
-            sb.addEventListener('updateend', pump, { once: true });
-          } else {
-            sb.addEventListener('updateend', () => {
-              if (!sb.updating) { sb.appendBuffer(value); sb.addEventListener('updateend', pump, { once: true }); }
-            }, { once: true });
-          }
-        };
-        pump();
-      }, { once: true });
 
       source = audioCtx.createMediaElementSource(audioEl);
       source.connect(analyser);
