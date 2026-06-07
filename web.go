@@ -35,9 +35,9 @@ type sseClient struct {
 }
 
 type sseHub struct {
-	mu             sync.RWMutex
-	clients        map[*sseClient]struct{}
-	replayBufSize  int
+	mu            sync.RWMutex
+	clients       map[*sseClient]struct{}
+	replayBufSize int
 	// replay ring buffer: channelID → circular slice of recent events
 	replay  map[string][]sseEvent
 	replayN map[string]int // write index (next slot to overwrite)
@@ -389,16 +389,74 @@ func startHTTPServer(listenAddr string, mgr *channelManager, hub *sseHub, uiPass
 				return
 			}
 			var body struct {
-				SMConfig *SMConfig `json:"modem_config,omitempty"`
+				SMConfig        *SMConfig `json:"modem_config,omitempty"`
+				MQTTTopicPrefix *string   `json:"mqtt_topic_prefix,omitempty"`
+				Name            *string   `json:"name,omitempty"`
+				BandwidthHz     *int      `json:"bandwidth_hz,omitempty"`
+				FreqHz          *int      `json:"freq_hz,omitempty"`
+				Mode            *string   `json:"mode,omitempty"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				http.Error(w, `{"error":"bad request"}`, http.StatusBadRequest)
 				return
 			}
+			// Validate mode if provided
+			if body.Mode != nil {
+				m := strings.ToLower(*body.Mode)
+				if m != "usb" && m != "lsb" {
+					http.Error(w, `{"error":"mode must be usb or lsb"}`, http.StatusBadRequest)
+					return
+				}
+				*body.Mode = m
+			}
+			restartModem := false
+			changed := false
 			if body.SMConfig != nil {
 				ch.mu.Lock()
 				ch.smCfg = *body.SMConfig
 				ch.mu.Unlock()
+				changed = true
+				restartModem = true
+			}
+			if body.MQTTTopicPrefix != nil {
+				ch.mu.Lock()
+				ch.mqttTopicPrefix = *body.MQTTTopicPrefix
+				ch.mu.Unlock()
+				changed = true
+			}
+			if body.Name != nil {
+				// ch.label is the API key and must not change (SSE subscriptions
+				// use it). Store the display name separately on ch.name so
+				// save() can persist it.
+				ch.mu.Lock()
+				ch.name = *body.Name
+				ch.mu.Unlock()
+				changed = true
+			}
+			if body.BandwidthHz != nil {
+				// setBandwidth updates the value and kicks the current WebSocket
+				// connection so the start() loop reconnects with the new bandwidth.
+				ch.inst.setBandwidth(*body.BandwidthHz)
+				changed = true
+			}
+			if body.FreqHz != nil || body.Mode != nil {
+				freqHz := 0
+				if body.FreqHz != nil {
+					freqHz = *body.FreqHz
+				}
+				mode := ""
+				if body.Mode != nil {
+					mode = *body.Mode
+				}
+				if freqHz > 0 || mode != "" {
+					ch.inst.setFrequency(freqHz, mode)
+					changed = true
+				}
+			}
+			if restartModem {
+				go ch.restartModem()
+			}
+			if changed {
 				mgr.save()
 			}
 			writeJSON(w, channelSnapshot(ch))
@@ -530,8 +588,8 @@ func startHTTPServer(listenAddr string, mgr *channelManager, hub *sseHub, uiPass
 		binary.LittleEndian.PutUint32(hdr[4:8], 0x7fffffff) // chunk size (streaming)
 		copy(hdr[8:12], "WAVE")
 		copy(hdr[12:16], "fmt ")
-		binary.LittleEndian.PutUint32(hdr[16:20], 16)                    // PCM subchunk size
-		binary.LittleEndian.PutUint16(hdr[20:22], 1)                     // PCM format
+		binary.LittleEndian.PutUint32(hdr[16:20], 16) // PCM subchunk size
+		binary.LittleEndian.PutUint16(hdr[20:22], 1)  // PCM format
 		binary.LittleEndian.PutUint16(hdr[22:24], uint16(numChannels))
 		binary.LittleEndian.PutUint32(hdr[24:28], uint32(sampleRate))
 		binary.LittleEndian.PutUint32(hdr[28:32], uint32(byteRate))
@@ -615,6 +673,7 @@ func channelSnapshot(ch *packetChannel) map[string]interface{} {
 	ch.mu.Lock()
 	smCfg := ch.smCfg
 	mqttPrefix := ch.mqttTopicPrefix
+	name := ch.name
 	ch.mu.Unlock()
 
 	instSnap := ch.inst.statusSnapshot()
@@ -622,8 +681,10 @@ func channelSnapshot(ch *packetChannel) map[string]interface{} {
 	return map[string]interface{}{
 		"id":                ch.channelID,
 		"label":             ch.label,
+		"name":              name,
 		"modem_config":      smCfg,
 		"instance":          instSnap,
 		"mqtt_topic_prefix": mqttPrefix,
+		"bandwidth_hz":      ch.inst.getBandwidth(),
 	}
 }

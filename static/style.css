@@ -256,6 +256,65 @@ main {
   font-family: monospace;
 }
 
+/* ── Channel settings row (name + bandwidth in config pane) ─────────────── */
+.ch-settings-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.ch-setting-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+  flex: 1;
+  min-width: 140px;
+}
+.ch-setting-input {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 13px;
+  padding: 4px 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.ch-setting-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.ch-setting-input-narrow {
+  max-width: 140px;
+}
+
+.mqtt-prefix-row {
+  margin: 8px 0 4px;
+}
+.mqtt-prefix-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.mqtt-prefix-input {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 13px;
+  padding: 4px 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.mqtt-prefix-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .dcd-indicators {
   display: flex;
   gap: 4px;

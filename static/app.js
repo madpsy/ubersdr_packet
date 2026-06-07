@@ -1215,6 +1215,52 @@ function renderChannelCard(ch) {
 
   // ── Config pane ──
   const cfgPane = el('div', 'config-pane');
+
+  // Channel settings row (name, freq, mode, bandwidth)
+  const chSettingsRow = el('div', 'ch-settings-row');
+
+  const nameLabel = el('label', 'ch-setting-label', 'Display Name');
+  const nameInput = document.createElement('input');
+  nameInput.type = 'text';
+  nameInput.className = 'ch-setting-input';
+  nameInput.placeholder = ch.label;
+  nameInput.value = ch.name || '';
+  nameLabel.appendChild(nameInput);
+  chSettingsRow.appendChild(nameLabel);
+
+  const freqLabel = el('label', 'ch-setting-label', 'Frequency (Hz)');
+  const freqInput = document.createElement('input');
+  freqInput.type = 'number';
+  freqInput.className = 'ch-setting-input';
+  freqInput.min = '1';
+  freqInput.value = (ch.instance && ch.instance.freq_hz) || '';
+  freqLabel.appendChild(freqInput);
+  chSettingsRow.appendChild(freqLabel);
+
+  const modeLabel = el('label', 'ch-setting-label', 'Mode');
+  const modeSelect = document.createElement('select');
+  modeSelect.className = 'ch-setting-input ch-setting-input-narrow';
+  ['usb', 'lsb'].forEach(m => {
+    const opt = document.createElement('option');
+    opt.value = m;
+    opt.textContent = m.toUpperCase();
+    if ((ch.instance && ch.instance.audio_mode) === m) opt.selected = true;
+    modeSelect.appendChild(opt);
+  });
+  modeLabel.appendChild(modeSelect);
+  chSettingsRow.appendChild(modeLabel);
+
+  const bwLabel = el('label', 'ch-setting-label', 'Bandwidth Hz (0=default)');
+  const bwInput = document.createElement('input');
+  bwInput.type = 'number';
+  bwInput.className = 'ch-setting-input ch-setting-input-narrow';
+  bwInput.min = '0';
+  bwInput.value = ch.bandwidth_hz || 0;
+  bwLabel.appendChild(bwInput);
+  chSettingsRow.appendChild(bwLabel);
+
+  cfgPane.appendChild(chSettingsRow);
+
   cfgPane.appendChild(el('h4', '', 'Modem Channel Configuration'));
   const cfgGrid = el('div', 'config-modem-grid');
   cfgPane.appendChild(cfgGrid);
@@ -1222,6 +1268,21 @@ function renderChannelCard(ch) {
   const smCfg = ch.modem_config || {};
   const smChannels = smCfg.channels || [{}, {}, {}, {}];
   for (let i = 0; i < 4; i++) cfgGrid.appendChild(buildModemChannelCard(i, smChannels[i]));
+
+  // MQTT prefix row — only shown when broker is configured
+  let mqttPrefixInput = null;
+  if (state.mqttConfigured) {
+    const mqttRow = el('div', 'mqtt-prefix-row');
+    const mqttLabel = el('label', '', '📡 MQTT Topic Prefix');
+    mqttPrefixInput = document.createElement('input');
+    mqttPrefixInput.type = 'text';
+    mqttPrefixInput.className = 'mqtt-prefix-input';
+    mqttPrefixInput.placeholder = 'e.g. packet/rx';
+    mqttPrefixInput.value = ch.mqtt_topic_prefix || '';
+    mqttLabel.appendChild(mqttPrefixInput);
+    mqttRow.appendChild(mqttLabel);
+    cfgPane.appendChild(mqttRow);
+  }
 
   const cfgActions = el('div', 'config-actions');
   const btnSave = el('button', 'btn btn-primary', 'Save Config');
@@ -1235,10 +1296,20 @@ function renderChannelCard(ch) {
       dcd_threshold: smCfg.dcd_threshold || 20,
       channels:      newChannels,
     };
+    const patchBody = {
+      modem_config:  newCfg,
+      name:          nameInput.value.trim(),
+      freq_hz:       parseInt(freqInput.value) || 0,
+      mode:          modeSelect.value,
+      bandwidth_hz:  parseInt(bwInput.value) || 0,
+    };
+    if (mqttPrefixInput !== null) {
+      patchBody.mqtt_topic_prefix = mqttPrefixInput.value.trim();
+    }
     const resp = await fetch(BASE + '/api/channels/' + encodeURIComponent(ch.label), {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ modem_config: newCfg }),
+      body: JSON.stringify(patchBody),
     });
     if (resp.status === 401) { showLoginModal(); return; }
     if (resp.ok) {

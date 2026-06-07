@@ -94,6 +94,10 @@ type instance struct {
 	streamSampleRate int
 	streamChannels   int
 
+	// reconnectCh is closed/replaced to kick the running connection to drop
+	// and reconnect immediately (e.g. after a bandwidth change).
+	reconnectCh chan struct{}
+
 	// AudioCh delivers decoded mono S16LE PCM chunks.
 	AudioCh chan []byte
 }
@@ -114,13 +118,38 @@ func newInstance(freqHz, carrierHz int, audioMode, ubersdrURL, password, labelOv
 		password:    password,
 		sessionID:   uuid.New().String(),
 		status:      "stopped",
+		reconnectCh: make(chan struct{}),
 		AudioCh:     make(chan []byte, 256),
 	}
 }
 
+// kickReconnect closes the current reconnectCh (signalling runOnce to drop
+// the connection) and installs a fresh one for the next cycle.
+// Must be called with inst.mu held.
+func (inst *instance) kickReconnect() {
+	old := inst.reconnectCh
+	inst.reconnectCh = make(chan struct{})
+	close(old)
+}
+
+// setBandwidth updates the bandwidth and kicks the current WebSocket
+// connection to drop so the start() loop reconnects with the new value.
 func (inst *instance) setBandwidth(hz int) {
 	inst.mu.Lock()
 	inst.bandwidthHz = hz
+	inst.kickReconnect()
+	inst.mu.Unlock()
+}
+
+// setFrequency updates the tuned frequency (and optionally mode) and kicks
+// the current WebSocket connection so the start() loop reconnects.
+func (inst *instance) setFrequency(freqHz int, mode string) {
+	inst.mu.Lock()
+	inst.freqHz = freqHz
+	if mode != "" {
+		inst.audioMode = mode
+	}
+	inst.kickReconnect()
 	inst.mu.Unlock()
 }
 
@@ -272,6 +301,10 @@ func (inst *instance) runOnce(ctx context.Context) (reconnect bool) {
 	localCtx, localCancel := context.WithCancel(ctx)
 	defer localCancel()
 
+	inst.mu.Lock()
+	reconnectCh := inst.reconnectCh
+	inst.mu.Unlock()
+
 	// Keepalive
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
@@ -288,11 +321,14 @@ func (inst *instance) runOnce(ctx context.Context) (reconnect bool) {
 		}
 	}()
 
-	// Context watcher
+	// Context watcher — also watches reconnectCh so a bandwidth change
+	// immediately drops the current connection and triggers a reconnect.
 	go func() {
 		select {
 		case <-ctx.Done():
-			conn.Close()
+			_ = conn.Close()
+		case <-reconnectCh:
+			_ = conn.Close()
 		case <-localCtx.Done():
 		}
 	}()
@@ -468,4 +504,3 @@ func (inst *instance) statusSnapshot() map[string]interface{} {
 		"bandwidth_hz":  inst.bandwidthHz,
 	}
 }
-

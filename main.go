@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -50,13 +51,13 @@ func envIntOr(key string, def int) int {
 // ---------------------------------------------------------------------------
 
 type channelConfig struct {
-	ID               string   `json:"id"`
-	FreqHz           int      `json:"freq_hz"`
-	Mode             string   `json:"mode"`
-	Name             string   `json:"name,omitempty"`
-	BandwidthHz      int      `json:"bandwidth_hz,omitempty"`
-	SMConfig         SMConfig `json:"modem_config"`
-	MQTTTopicPrefix  string   `json:"mqtt_topic_prefix,omitempty"`
+	ID              string   `json:"id"`
+	FreqHz          int      `json:"freq_hz"`
+	Mode            string   `json:"mode"`
+	Name            string   `json:"name,omitempty"`
+	BandwidthHz     int      `json:"bandwidth_hz,omitempty"`
+	SMConfig        SMConfig `json:"modem_config"`
+	MQTTTopicPrefix string   `json:"mqtt_topic_prefix,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -74,13 +75,14 @@ type packetChannel struct {
 	mu              sync.Mutex
 	smCfg           SMConfig
 	mqttTopicPrefix string
+	name            string // custom display name (empty = use label)
 
 	// Audio tap — fan-out raw PCM bytes to preview listeners.
 	tapMu   sync.RWMutex
 	tapSubs map[chan []byte]struct{}
 }
 
-func newPacketChannel(inst *instance, cfg SMConfig, channelID, mqttTopicPrefix string) *packetChannel {
+func newPacketChannel(inst *instance, cfg SMConfig, channelID, mqttTopicPrefix, name string) *packetChannel {
 	return &packetChannel{
 		inst:            inst,
 		label:           inst.label,
@@ -89,6 +91,7 @@ func newPacketChannel(inst *instance, cfg SMConfig, channelID, mqttTopicPrefix s
 		audioChan:       make(chan AudioSample, 1024),
 		smCfg:           cfg,
 		mqttTopicPrefix: mqttTopicPrefix,
+		name:            name,
 		tapSubs:         make(map[chan []byte]struct{}),
 	}
 }
@@ -125,18 +128,36 @@ func (pc *packetChannel) tapBroadcast(pcmBytes []byte) {
 
 // start launches the UberSDR connection and the QtSoundModem decoder.
 func (pc *packetChannel) start(ctx context.Context, hub *sseHub, mq *mqttClient) error {
-	decoder, err := NewSoundModemDecoder(pc.smCfg)
+	// startModem creates a fresh SoundModemDecoder and starts it.
+	// Returns the decoder so the caller can watch its CrashChan.
+	startModem := func() (*SoundModemDecoder, error) {
+		pc.mu.Lock()
+		cfg := pc.smCfg
+		pc.mu.Unlock()
+
+		d, err := NewSoundModemDecoder(cfg)
+		if err != nil {
+			return nil, err
+		}
+		if err := d.Start(pc.audioChan, pc.resultChan); err != nil {
+			return nil, err
+		}
+		pc.mu.Lock()
+		pc.decoder = d
+		pc.mu.Unlock()
+		return d, nil
+	}
+
+	decoder, err := startModem()
 	if err != nil {
 		return fmt.Errorf("create decoder: %w", err)
 	}
-	pc.decoder = decoder
-
-	if err := decoder.Start(pc.audioChan, pc.resultChan); err != nil {
-		return fmt.Errorf("start decoder: %w", err)
-	}
 
 	// Forward decoded frames to the SSE hub and optionally MQTT.
+	// Restarts the modem with exponential backoff if it crashes.
 	go func() {
+		retries := 0
+		const maxBackoff = 60 * time.Second
 		for {
 			select {
 			case <-ctx.Done():
@@ -151,10 +172,38 @@ func (pc *packetChannel) start(ctx context.Context, hub *sseHub, mq *mqttClient)
 					topic := pc.mqttTopicPrefix + "/" + pc.label
 					mq.Publish(topic, frame)
 				}
-			case err := <-decoder.CrashChan():
-				log.Printf("[%s] modem crashed: %v", pc.label, err)
-				hub.broadcastError(pc.channelID, fmt.Sprintf("modem crashed: %v", err))
-				return
+			case crashErr := <-decoder.CrashChan():
+				log.Printf("[%s] modem crashed: %v — restarting…", pc.label, crashErr)
+				hub.broadcastError(pc.channelID, fmt.Sprintf("modem crashed: %v", crashErr))
+
+				retries++
+				backoff := time.Duration(1<<uint(retries)) * time.Second
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+				log.Printf("[%s] modem restart in %.0fs (attempt %d)…", pc.label, backoff.Seconds(), retries)
+
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(backoff):
+				}
+
+				var restartErr error
+				decoder, restartErr = startModem()
+				if restartErr != nil {
+					log.Printf("[%s] modem restart failed: %v", pc.label, restartErr)
+					// Keep retrying — loop will hit CrashChan again on next iteration
+					// but decoder is nil; sleep briefly to avoid tight loop.
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(backoff):
+					}
+					continue
+				}
+				log.Printf("[%s] modem restarted successfully", pc.label)
+				retries = 0 // reset backoff on successful restart
 			}
 		}
 	}()
@@ -193,6 +242,36 @@ func (pc *packetChannel) stop() {
 	if pc.decoder != nil {
 		_ = pc.decoder.Stop()
 	}
+}
+
+// restartModem stops the current SoundModemDecoder and starts a fresh one
+// using the current smCfg. Called after a modem_config PATCH.
+func (pc *packetChannel) restartModem() {
+	pc.mu.Lock()
+	old := pc.decoder
+	pc.mu.Unlock()
+
+	if old != nil {
+		_ = old.Stop()
+	}
+
+	pc.mu.Lock()
+	cfg := pc.smCfg
+	pc.mu.Unlock()
+
+	d, err := NewSoundModemDecoder(cfg)
+	if err != nil {
+		log.Printf("[%s] restartModem: create: %v", pc.label, err)
+		return
+	}
+	if err := d.Start(pc.audioChan, pc.resultChan); err != nil {
+		log.Printf("[%s] restartModem: start: %v", pc.label, err)
+		return
+	}
+	pc.mu.Lock()
+	pc.decoder = d
+	pc.mu.Unlock()
+	log.Printf("[%s] modem restarted (config updated)", pc.label)
 }
 
 func (pc *packetChannel) getSMConfig() SMConfig {
@@ -262,7 +341,7 @@ func (m *channelManager) add(freqHz int, mode, name, channelID string, bwHz int,
 	smCfg.SampleRate = 0 // will be set from stream on first packet
 
 	inst := newInstance(freqHz, 0, mode, m.ubersdrURL, m.password, name, bwHz)
-	pc := newPacketChannel(inst, smCfg, channelID, mqttTopicPrefix)
+	pc := newPacketChannel(inst, smCfg, channelID, mqttTopicPrefix, name)
 
 	if err := pc.start(m.ctx, m.hub, m.mq); err != nil {
 		return nil, fmt.Errorf("start channel: %w", err)
@@ -313,14 +392,17 @@ func (m *channelManager) save() {
 	m.mu.RLock()
 	cfgs := make([]channelConfig, 0, len(m.channels))
 	for _, ch := range m.channels {
-		autoLabel := fmt.Sprintf("%d_%s", ch.inst.freqHz, ch.inst.audioMode)
-		name := ""
-		if ch.label != autoLabel {
-			name = ch.label
-		}
 		ch.mu.Lock()
+		name := ch.name
 		mqttPrefix := ch.mqttTopicPrefix
 		ch.mu.Unlock()
+		// Fall back to label-derived name if no explicit name is set.
+		if name == "" {
+			autoLabel := fmt.Sprintf("%d_%s", ch.inst.freqHz, ch.inst.audioMode)
+			if ch.label != autoLabel {
+				name = ch.label
+			}
+		}
 		cfgs = append(cfgs, channelConfig{
 			ID:              ch.channelID,
 			FreqHz:          ch.inst.freqHz,
