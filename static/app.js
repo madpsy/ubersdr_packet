@@ -68,7 +68,7 @@ const MAX_MONITOR  = 200;
 const MAX_LOG      = 300;
 
 // ---------------------------------------------------------------------------
-// Auth state (mirrors airsplice pattern)
+// Auth state
 // ---------------------------------------------------------------------------
 
 const state = {
@@ -107,7 +107,7 @@ function api(path, opts = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// Auth UI (mirrors airsplice renderAuthBar / doLogin / doLogout)
+// Auth UI
 // ---------------------------------------------------------------------------
 
 function renderAuthBar() {

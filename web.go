@@ -131,7 +131,7 @@ func (h *sseHub) broadcastError(channelID, msg string) {
 }
 
 // ---------------------------------------------------------------------------
-// Session store — in-memory set of valid session tokens (same as airsplice)
+// Session store — in-memory set of valid session tokens
 // ---------------------------------------------------------------------------
 
 type sessionStore struct {

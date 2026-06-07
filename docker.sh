@@ -53,7 +53,7 @@ stage_context() {
     echo "Staging build context in $TMPCTX..."
     rsync -a --exclude='.git' \
               --exclude='data' \
-              --exclude='ubersdr_airsplice' \
+              --exclude='ubersdr-packet' \
               "$SCRIPT_DIR/" "$TMPCTX/"
 }
 
