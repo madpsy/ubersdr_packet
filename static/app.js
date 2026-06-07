@@ -77,7 +77,7 @@ const state = {
   authed: false,
   passwordConfigured: false,
   mqttConfigured: false,
-  mqttTopicPrefix: 'packet', // global default; overwritten by /api/config
+  mqttTopicPrefix: '', // global default; overwritten by /api/config
 };
 
 // ---------------------------------------------------------------------------
@@ -338,7 +338,8 @@ function initAddPanel() {
 
   // Frequency preset dropdown — populates freq + mode fields
   // Split MQTT topic field: read-only prefix badge + editable suffix input.
-  // The badge shows the global prefix (e.g. "packet/") from the server config.
+  // The badge shows the global prefix from the server config (MQTT_TOPIC_PREFIX).
+  // Only the suffix is stored per-channel; the prefix is always server-side.
   // The suffix auto-populates from the channel name/label as the user types,
   // unless they've manually edited it.
   const mqttSuffixEl = document.getElementById('add-mqtt-suffix');
@@ -393,14 +394,14 @@ function initAddPanel() {
     if (!freqHz || freqHz <= 0) { alert('Enter a valid frequency in Hz'); return; }
 
     const modemChannels = readModemChannels(grid);
-    const pfx = state.mqttTopicPrefix || 'packet';
+    const pfx = state.mqttTopicPrefix;
     const sfx = mqttSuffixEl ? mqttSuffixEl.value.trim() : '';
     const body = {
       freq_hz:           freqHz,
       mode:              document.getElementById('add-mode').value,
       name:              document.getElementById('add-name').value.trim(),
       bandwidth_hz:      parseInt(document.getElementById('add-bw').value) || 0,
-      mqtt_topic_prefix: state.mqttConfigured && sfx ? pfx + '/' + sfx : '',
+      mqtt_topic_prefix: state.mqttConfigured && sfx ? sfx : '',
       modem_config: {
         sample_rate:   0,
         dcd_threshold: 20,
@@ -815,9 +816,13 @@ function renderChannelCard(ch) {
     fmtFreq(ch.instance.freq_hz) + ' ' + ch.instance.audio_mode.toUpperCase());
   const statusBadge = el('span', 'channel-status-badge ' + (ch.instance.status || ''),
     ch.instance.status || 'stopped');
-  // MQTT topic badge — shown when a topic prefix is configured for this channel
-  const mqttBadge = ch.mqtt_topic_prefix
-    ? el('span', 'channel-mqtt-badge', '📡 ' + ch.mqtt_topic_prefix)
+  // MQTT topic badge — shown when MQTT is configured; displays the full topic
+  // (global prefix + "/" + per-channel suffix, or prefix + "/" + label).
+  // Use window.state (global app state) — local `state` is the per-channel state.
+  const mqttSuffix = ch.mqtt_topic_prefix || ch.label;
+  const appState = window.state;
+  const mqttBadge = (appState && appState.mqttConfigured)
+    ? el('span', 'channel-mqtt-badge', '📡 ' + (appState.mqttTopicPrefix ? appState.mqttTopicPrefix + '/' + mqttSuffix : mqttSuffix))
     : null;
 
   const dcdSmCh = (ch.modem_config || {}).channels || [];
@@ -1330,15 +1335,10 @@ function renderChannelCard(ch) {
   // MQTT topic row — always rendered; CSS hides it unless body.mqtt-enabled.
   // Split into read-only prefix badge + editable suffix so the full topic path
   // is always visible: [packet/] [mychannel]
-  const globalPfx = state.mqttTopicPrefix || 'packet';
-  // Decompose stored full topic into prefix + suffix for display.
-  // If the stored value starts with the global prefix, show just the suffix;
-  // otherwise show the whole stored value in the suffix field.
-  let initSuffix = ch.label; // default suffix = channel label
-  if (ch.mqtt_topic_prefix) {
-    const sep = ch.mqtt_topic_prefix.indexOf('/');
-    initSuffix = sep >= 0 ? ch.mqtt_topic_prefix.slice(sep + 1) : ch.mqtt_topic_prefix;
-  }
+  const globalPfx = state.mqttTopicPrefix;
+  // mqtt_topic_prefix stores only the suffix (the part after the global prefix).
+  // Default to the channel label when nothing is stored.
+  const initSuffix = ch.mqtt_topic_prefix || ch.label;
   const mqttRow = el('div', 'mqtt-prefix-row');
   const mqttLabel = el('label', '', '📡 MQTT Topic');
   const mqttTopicField = el('div', 'mqtt-topic-field');
@@ -1374,7 +1374,8 @@ function renderChannelCard(ch) {
       bandwidth_hz:  parseInt(bwInput.value) || 0,
     };
     const sfx = mqttSuffixInput.value.trim();
-    patchBody.mqtt_topic_prefix = sfx ? globalPfx + '/' + sfx : '';
+    // Store only the suffix; the global prefix is server-side (MQTT_TOPIC_PREFIX).
+    patchBody.mqtt_topic_prefix = sfx;
     const resp = await fetch(BASE + '/api/channels/' + encodeURIComponent(ch.label), {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -1688,7 +1689,7 @@ async function loadConfig() {
     if (!resp.ok) return;
     const cfg = await resp.json();
     state.mqttConfigured = !!cfg.mqtt_configured;
-    state.mqttTopicPrefix = cfg.mqtt_topic_prefix || 'packet';
+    state.mqttTopicPrefix = cfg.mqtt_topic_prefix || '';
     // Body class drives CSS visibility of all MQTT rows (add-channel form
     // and per-channel config panes) without needing to re-render cards.
     document.body.classList.toggle('mqtt-enabled', state.mqttConfigured);

@@ -22,7 +22,7 @@
 //	MQTT_USER             MQTT username
 //	MQTT_PASS             MQTT password
 //	MQTT_TLS_SKIP_VERIFY  Set to "true" to skip TLS certificate verification
-//	MQTT_TOPIC_PREFIX     Default MQTT topic prefix (default: "packet")
+//	MQTT_TOPIC_PREFIX     Default MQTT topic prefix (no default; required for MQTT publishing)
 //
 // Equivalent CLI flags (run with -help for full list):
 //
@@ -195,12 +195,16 @@ func (pc *packetChannel) start(ctx context.Context, hub *sseHub, mq *mqttClient,
 				// KISS frame format:    0xC0 (port<<4)|0x00 <ax25> 0xC0
 				if mq != nil && len(frame) >= 6 && frame[0] == MsgPacket {
 					pc.mu.Lock()
-					prefix := pc.mqttTopicPrefix
+					suffix := pc.mqttTopicPrefix // per-channel suffix only (e.g. "7049450_usb")
 					pc.mu.Unlock()
-					if prefix == "" {
-						prefix = defaultPrefix
-					}
-					if prefix != "" {
+					// Build the full topic: <globalPrefix>/<suffix>.
+					// suffix defaults to the channel label when empty.
+					// If no global prefix is configured, MQTT publishing is skipped.
+					if defaultPrefix != "" {
+						if suffix == "" {
+							suffix = pc.label
+						}
+						topic := defaultPrefix + "/" + suffix
 						kissPort := frame[1]
 						ax25 := frame[6:]
 						kissFrame := make([]byte, 3+len(ax25))
@@ -208,7 +212,6 @@ func (pc *packetChannel) start(ctx context.Context, hub *sseHub, mq *mqttClient,
 						kissFrame[1] = (kissPort << 4) | 0x00 // data frame, port N
 						copy(kissFrame[2:], ax25)
 						kissFrame[2+len(ax25)] = 0xC0
-						topic := prefix + "/" + pc.label
 						mq.Publish(topic, kissFrame)
 					}
 				}
@@ -345,7 +348,7 @@ type channelManager struct {
 	password          string
 	hub               *sseHub
 	mq                *mqttClient
-	mqttDefaultPrefix string // global fallback topic prefix (e.g. "packet")
+	mqttDefaultPrefix string // global fallback topic prefix (from MQTT_TOPIC_PREFIX env)
 	ctx               context.Context
 	configPath        string
 }
@@ -519,7 +522,7 @@ func main() {
 		mqttUser          = flag.String("mqtt-user", envOr("MQTT_USER", ""), "MQTT username (env: MQTT_USER)")
 		mqttPass          = flag.String("mqtt-pass", envOr("MQTT_PASS", ""), "MQTT password (env: MQTT_PASS)")
 		mqttTLSSkipVerify = flag.Bool("mqtt-tls-skip-verify", envOr("MQTT_TLS_SKIP_VERIFY", "") == "true", "Skip TLS certificate verification for MQTT (env: MQTT_TLS_SKIP_VERIFY)")
-		mqttTopicPrefix   = flag.String("mqtt-topic-prefix", envOr("MQTT_TOPIC_PREFIX", "packet"), "Default MQTT topic prefix; frames publish to <prefix>/<channel_label> (env: MQTT_TOPIC_PREFIX)")
+		mqttTopicPrefix   = flag.String("mqtt-topic-prefix", envOr("MQTT_TOPIC_PREFIX", ""), "Default MQTT topic prefix; frames publish to <prefix>/<channel_label> (env: MQTT_TOPIC_PREFIX)")
 	)
 	flag.Parse()
 
