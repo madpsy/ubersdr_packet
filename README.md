@@ -174,9 +174,13 @@ Mapped to `./data` on the host by default (created by `install.sh`).
 
 ## Ports
 
-| Port | Description |
-|------|-------------|
-| `6089` | Web UI (HTTP) and SSE live feed |
+The service listens on port `6089` inside the container and is accessible by container name on the shared Docker network (`ubersdr_sdr-network`). No host port mapping is needed — access is via the UberSDR proxy.
+
+To expose the UI directly to the host for development, add to `docker-compose.yml`:
+```yaml
+ports:
+  - "6089:6089"
+```
 
 ---
 
