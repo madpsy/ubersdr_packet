@@ -37,22 +37,22 @@ const RX_SHIFT = [
   1000,  // 1  AFSK 1200bd (Bell 202)
   450,   // 2  AFSK 600bd
   1805,  // 3  AFSK 2400bd
-  600,   // 4  BPSK 1200bd
-  300,   // 5  BPSK 600bd
-  150,   // 6  BPSK 300bd
+  1200,  // 4  BPSK 1200bd
+  600,   // 5  BPSK 600bd
+  300,   // 6  BPSK 300bd
   1200,  // 7  BPSK 2400bd
   2400,  // 8  QPSK 4800bd
   1800,  // 9  QPSK 3600bd
   1200,  // 10 QPSK 2400bd
   525,   // 11 BPSK FEC
   1200,  // 12 DW QPSK V26A
-  2400,  // 13 DW 8PSK V27
+  1600,  // 13 DW 8PSK V27
   1200,  // 14 DW QPSK V26B
   500,   // 15 ARDOP
 ];
 
 const WF_CH_COLORS = ['#29B6F6', '#66BB6A', '#CE93D8', '#FFA726'];
-const WF_MAX_FREQ  = 6000;  // Hz — Nyquist of 12 kHz sample rate
+const WF_MAX_FREQ  = 3300;  // Hz — display range matches extension (_wfMaxFreq = 3300)
 const WF_HEIGHT    = 120;
 const WF_HDR_H     = 22;
 const WF_LINE_MS   = 50;    // 20 lines/sec
