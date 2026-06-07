@@ -267,6 +267,13 @@ body.pw-configured:not(.is-authed) .config-pane textarea {
   pointer-events: none;
 }
 
+/* ── Remove button locked state (not authenticated) ─────────────────────── */
+body.pw-configured:not(.is-authed) .channel-actions .btn-danger {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 /* ── Channel settings row (name + bandwidth in config pane) ─────────────── */
 .ch-settings-row {
   display: flex;

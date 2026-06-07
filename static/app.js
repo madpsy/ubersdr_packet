@@ -1547,7 +1547,7 @@ function renderChannelCard(ch) {
       const dcdOn = data[2] !== 0;
       if (smCh >= 4) return;
       if (dcdOn) {
-        // Light the LED and (re)start the 500ms auto-clear timer
+        // Light the LED and (re)start the 1000ms auto-clear timer
         state.dcd[smCh] = true;
         updateDCDLed(smCh, true);
         if (state.dcdTimers[smCh]) clearTimeout(state.dcdTimers[smCh]);
@@ -1555,7 +1555,7 @@ function renderChannelCard(ch) {
           state.dcdTimers[smCh] = null;
           state.dcd[smCh] = false;
           updateDCDLed(smCh, false);
-        }, 500);
+        }, 1000);
       } else {
         // Explicit DCD-off: cancel timer and clear immediately
         if (state.dcdTimers[smCh]) { clearTimeout(state.dcdTimers[smCh]); state.dcdTimers[smCh] = null; }
