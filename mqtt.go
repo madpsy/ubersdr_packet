@@ -16,7 +16,10 @@
 //     "frame":          "<base64>",     // raw AX.25 bytes, base64-encoded
 //     "freq_hz":        7049450,        // dial (VFO) frequency in Hz
 //     "mode":           "usb",          // demodulation mode ("usb" or "lsb")
-//     "freq_offset_hz": 1700            // carrier offset from dial freq in Hz
+//     "freq_offset_hz": 1700,           // sub-channel centre frequency in Hz
+//     "modem_type":     1,              // modem index (1=AFSK 1200bd, etc.)
+//     "fx25":           1,              // FX.25: 0=off, 1=on
+//     "il2p":           2               // IL2P: 0=off, 1=IL2P, 2=IL2P+CRC, 3=both
 //     }
 //
 //  2. Structured topic — <prefix>/<channel>/<sm_ch>/<from>/<to>
@@ -33,7 +36,10 @@
 //     "frame":          "<base64>",
 //     "freq_hz":        7049450,
 //     "mode":           "usb",
-//     "freq_offset_hz": 1700
+//     "freq_offset_hz": 1700,
+//     "modem_type":     1,
+//     "fx25":           1,
+//     "il2p":           2
 //     }
 //
 // TLS is enabled automatically when the broker URL uses the ssl:// or tls://

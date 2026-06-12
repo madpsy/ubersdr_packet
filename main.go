@@ -567,6 +567,7 @@ func (pc *packetChannel) start(ctx context.Context, hub *sseHub, mq *mqttClient,
 					pc.mu.Lock()
 					suffix := pc.mqttTopicPrefix
 					chLabel := pc.label
+					smCfgSnap := pc.smCfg
 					pc.mu.Unlock()
 					if defaultPrefix != "" {
 						if suffix == "" {
@@ -578,8 +579,19 @@ func (pc *packetChannel) start(ctx context.Context, hub *sseHub, mq *mqttClient,
 						pc.inst.mu.Lock()
 						instFreqHz := pc.inst.freqHz
 						instMode := pc.inst.audioMode
-						instCarrierHz := pc.inst.carrierHz
 						pc.inst.mu.Unlock()
+
+						// Per-sub-channel modem settings for the channel that
+						// decoded this frame (from the UI modem configuration).
+						var chCenterHz float64
+						var chModemType, chFX25, chIL2P int
+						if sf.SmCh >= 0 && sf.SmCh < len(smCfgSnap.Channels) {
+							ch := smCfgSnap.Channels[sf.SmCh]
+							chCenterHz = ch.Freq
+							chModemType = ch.ModemType
+							chFX25 = ch.FX25
+							chIL2P = ch.IL2P
+						}
 
 						// smChLabel converts a modem sub-channel index to its
 						// letter label (0→A, 1→B, 2→C, 3→D).
@@ -620,7 +632,10 @@ func (pc *packetChannel) start(ctx context.Context, hub *sseHub, mq *mqttClient,
 							Frame        []byte   `json:"frame"`
 							FreqHz       int      `json:"freq_hz"`
 							Mode         string   `json:"mode"`
-							FreqOffsetHz int      `json:"freq_offset_hz"`
+							FreqOffsetHz float64  `json:"freq_offset_hz"`
+							ModemType    int      `json:"modem_type"`
+							FX25         int      `json:"fx25"`
+							IL2P         int      `json:"il2p"`
 						}
 						rawMsg := mqttRaw{
 							Channel:      chLabel,
@@ -630,7 +645,10 @@ func (pc *packetChannel) start(ctx context.Context, hub *sseHub, mq *mqttClient,
 							Frame:        ax25,
 							FreqHz:       instFreqHz,
 							Mode:         instMode,
-							FreqOffsetHz: instCarrierHz,
+							FreqOffsetHz: chCenterHz,
+							ModemType:    chModemType,
+							FX25:         chFX25,
+							IL2P:         chIL2P,
 						}
 						if rawPayload, err := json.Marshal(rawMsg); err == nil {
 							mq.Publish(base+"/raw", rawPayload)
@@ -649,7 +667,10 @@ func (pc *packetChannel) start(ctx context.Context, hub *sseHub, mq *mqttClient,
 							Frame        []byte   `json:"frame"`
 							FreqHz       int      `json:"freq_hz"`
 							Mode         string   `json:"mode"`
-							FreqOffsetHz int      `json:"freq_offset_hz"`
+							FreqOffsetHz float64  `json:"freq_offset_hz"`
+							ModemType    int      `json:"modem_type"`
+							FX25         int      `json:"fx25"`
+							IL2P         int      `json:"il2p"`
 						}
 						msg := mqttMsg{
 							Channel:      chLabel,
@@ -662,7 +683,10 @@ func (pc *packetChannel) start(ctx context.Context, hub *sseHub, mq *mqttClient,
 							Frame:        ax25,
 							FreqHz:       instFreqHz,
 							Mode:         instMode,
-							FreqOffsetHz: instCarrierHz,
+							FreqOffsetHz: chCenterHz,
+							ModemType:    chModemType,
+							FX25:         chFX25,
+							IL2P:         chIL2P,
 						}
 						structuredTopic := base + "/" + smChLabel + "/" + fromSeg + "/" + toSeg
 						if payload, err := json.Marshal(msg); err == nil {
