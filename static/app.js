@@ -1232,14 +1232,34 @@ function attachWaterfall(wfWrap, label, channelFreqs) {
       if (!entry.from) return;
       const durationMs    = MODEM_TX_MS[modemIdx] ?? 570;
       const durationLines = Math.max(2, Math.round(durationMs / WF_LINE_MS));
+
+      // Compensate for the browser's audio lookahead buffer.
+      // The <audio> element buffers ahead of the playback cursor, so the
+      // waterfall is showing audio from ~bufferSec seconds ago relative to
+      // wall-clock time. The SSE frame decode event fires at real-time, so
+      // without compensation the marker appears too early (too high up).
+      // audioEl.buffered.end(0) - audioEl.currentTime gives the buffered
+      // lookahead in seconds; convert to waterfall lines and shift the marker
+      // forward (down) by that amount so it aligns with the visible audio.
+      let bufferLines = 0;
+      if (audioEl && audioEl.buffered && audioEl.buffered.length > 0) {
+        try {
+          const bufferSec = audioEl.buffered.end(audioEl.buffered.length - 1) - audioEl.currentTime;
+          if (bufferSec > 0 && bufferSec < 30) { // sanity-clamp
+            bufferLines = Math.round(bufferSec * 1000 / WF_LINE_MS);
+          }
+        } catch (_) {}
+      }
+
       // The decode fires AFTER the full frame has been received, so the
       // transmission already happened durationLines rows ago. Place the bar
       // so its bottom edge aligns with the current waterfall position (decode
       // moment) and its top edge is durationLines rows above (already scrolled).
+      // bufferLines shifts the marker forward to compensate for audio buffering.
       txEvents.push({
         callsign:      entry.from,
         smCh:          entry.smCh,
-        startLine:     wfLineCount - durationLines,
+        startLine:     wfLineCount - durationLines + bufferLines,
         durationLines,
       });
       // Keep ring bounded
@@ -1262,7 +1282,7 @@ function getState(id) {
       frames:        [],
       dcd:           [false, false, false, false],
       dcdTimers:     [null, null, null, null],
-      filter:        { type: 'all', smCh: 'all', from: '', to: '', search: '', maxFrames: 100 },
+      filter:        { type: 'all', smCh: 'all', from: '', to: '', search: '', maxFrames: 10 },
       lastFrameTime: null,
       lastCallsign:  null,
       agoTimer:      null,
@@ -1494,7 +1514,7 @@ function renderChannelCard(ch) {
   const selMax = document.createElement('select');
   [[10,'10'],[25,'25'],[50,'50'],[100,'100'],[250,'250'],[500,'500'],[0,'∞']].forEach(([v,t]) => {
     const o = document.createElement('option'); o.value = v; o.textContent = t;
-    if (v === 100) o.selected = true;
+    if (v === 10) o.selected = true;
     selMax.appendChild(o);
   });
   selMax.addEventListener('change', () => { state.filter.maxFrames = parseInt(selMax.value) || 0; renderFrames(); });
