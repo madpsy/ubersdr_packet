@@ -299,6 +299,34 @@ function showApiDocs() {
       '<code>via</code> (array), <code>info</code> (string), <code>snr</code> (dB float or null), ' +
       '<code>received_at</code> (RFC3339Nano).'),
 
+    // ── Stats ─────────────────────────────────────────────────────────────────
+    section('Statistics'),
+    endpoint('GET', '/api/stats',
+      'Lifetime per-(channel, callsign, sm_ch) frame statistics. Counters accumulate for the ' +
+      'process lifetime and are never evicted (unlike the 1000-frame ring buffer). ' +
+      'All query parameters are optional.',
+      [
+        `# All channels, all callsigns`,
+        `curl '${base}/api/stats'`,
+        ``,
+        `# One channel`,
+        `curl '${base}/api/stats?channel=7049450_usb'`,
+        ``,
+        `# One callsign across all channels`,
+        `curl '${base}/api/stats?callsign=G0ABC-9'`,
+        ``,
+        `# One channel + specific modem sub-channel (0=A, 1=B, 2=C, 3=D)`,
+        `curl '${base}/api/stats?channel=7049450_usb&sm_ch=0'`,
+      ],
+      'Response: JSON array sorted by <code>total_frames</code> descending. Each object: ' +
+      '<code>channel</code>, <code>callsign</code>, <code>sm_ch</code>, ' +
+      '<code>total_frames</code>, <code>first_seen</code>, <code>last_seen</code>, ' +
+      '<code>snr_count</code> / <code>snr_min</code> / <code>snr_max</code> / <code>snr_mean</code>, ' +
+      '<code>frames_per_day</code> (object: UTC date → count), ' +
+      '<code>frames_per_hour</code> (array[24]: UTC hour → count), ' +
+      '<code>frame_types</code> (object: type → count), ' +
+      '<code>top_destinations</code> (object: callsign → count, top 50).'),
+
     // ── Live Feed (SSE) ──────────────────────────────────────────────────────
     section('Live Feed — SSE'),
     `<div class="apidocs-endpoint">
@@ -401,11 +429,15 @@ function showApiDocs() {
         `{`,
         `  "channel":     "7049450_usb",`,
         `  "modem_ch":    0,`,
+        `  "from":        "G0ABC-9",`,
+        `  "to":          "APRS",`,
+        `  "frame_type":  "aprs",`,
         `  "snr":         42.3,`,
         `  "received_at": "2024-01-01T12:00:00.000000000Z",`,
         `  "frame":       "<base64-encoded raw AX.25 bytes>"`,
         `}`,
         ``,
+        `# frame_type: "aprs" | "ui" | "i" | "s" | "u" (empty string if unparseable).`,
         `# snr is null when SNR data is unavailable for the channel.`,
         `# frame is the raw AX.25 bytes, base64-encoded (RFC 4648).`,
       ]) +
@@ -1265,6 +1297,14 @@ function renderChannelCard(ch) {
     if (window.SNRHistory) window.SNRHistory.open(ch.label);
   });
   actions.appendChild(btnSNR);
+
+  const btnStats = el('button', 'btn btn-secondary btn-sm btn-stats', '📊 Stats');
+  btnStats.title = 'View frame statistics for this channel';
+  btnStats.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (window.StatsModal) window.StatsModal.open(ch.label);
+  });
+  actions.appendChild(btnStats);
 
   const btnDel = el('button', 'btn btn-danger btn-sm', 'Remove');
   btnDel.addEventListener('click', async (e) => {

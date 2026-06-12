@@ -270,16 +270,16 @@ func parseAX25Addrs(ax25 []byte) (from, to string, via []string) {
 
 // storeFrame parses a MsgPacket wire frame and appends it to the ring buffer.
 // frame layout: [MsgPacket][kissPort][snr:4 LE float32][frameLen:4 BE uint32][ax25...]
-func (pc *packetChannel) storeFrame(frame []byte, receivedAt time.Time) {
+func (pc *packetChannel) storeFrame(frame []byte, receivedAt time.Time) *storedFrame {
 	if len(frame) < 10 || frame[0] != MsgPacket {
-		return
+		return nil
 	}
 	smCh := int(frame[1])
 	snrBits := binary.LittleEndian.Uint32(frame[2:6])
 	snrVal := math.Float32frombits(snrBits)
 	frameLen := binary.BigEndian.Uint32(frame[6:10])
 	if uint32(len(frame)) < 10+frameLen {
-		return
+		return nil
 	}
 	ax25 := frame[10 : 10+frameLen]
 
@@ -351,6 +351,10 @@ func (pc *packetChannel) storeFrame(frame []byte, receivedAt time.Time) {
 		pc.frameW = (pc.frameW + 1) % frameStoreSize
 	}
 	pc.frameMu.Unlock()
+
+	// Accumulate lifetime statistics (never evicted, unlike the ring buffer).
+	globalStats.Record(pc.label, sf.From, sf.To, sf.FrameType, sf.SmCh, sf.SNR, sf.ReceivedAt)
+	return &sf
 }
 
 // queryFrames returns stored frames matching the given filters.
@@ -550,15 +554,16 @@ func (pc *packetChannel) start(ctx context.Context, hub *sseHub, mq *mqttClient,
 				}
 				hub.broadcast(pc.channelID, frame)
 				// Store decoded AX.25 frames in the server-side ring buffer.
+				var sf *storedFrame
 				if len(frame) >= 10 && frame[0] == MsgPacket {
-					pc.storeFrame(frame, time.Now())
+					sf = pc.storeFrame(frame, time.Now())
 				}
 				// Publish decoded AX.25 frames to MQTT as JSON.
 				// Only MsgPacket frames carry actual decoded AX.25 data;
 				// MsgDCD / MsgMonitor / MsgLog are UI-only and must not be
 				// forwarded to MQTT.
 				// Internal wire format: [MsgPacket][kissPort][snr float32 LE][frameLen uint32 LE][ax25...]
-				if mq != nil && len(frame) >= 10 && frame[0] == MsgPacket {
+				if mq != nil && sf != nil {
 					pc.mu.Lock()
 					suffix := pc.mqttTopicPrefix
 					chLabel := pc.label
@@ -568,26 +573,29 @@ func (pc *packetChannel) start(ctx context.Context, hub *sseHub, mq *mqttClient,
 							suffix = chLabel
 						}
 						topic := defaultPrefix + "/" + suffix
-						kissPort := frame[1]
-						snrBits := binary.LittleEndian.Uint32(frame[2:6])
-						snrVal := math.Float32frombits(snrBits)
 						ax25 := frame[10:]
 
 						type mqttMsg struct {
 							Channel    string   `json:"channel"`
 							ModemCh    int      `json:"modem_ch"`
+							From       string   `json:"from"`
+							To         string   `json:"to"`
+							FrameType  string   `json:"frame_type"`
 							SNR        *float64 `json:"snr"`
 							ReceivedAt string   `json:"received_at"`
 							Frame      []byte   `json:"frame"` // base64 by encoding/json
 						}
 						msg := mqttMsg{
 							Channel:    chLabel,
-							ModemCh:    int(kissPort),
-							ReceivedAt: time.Now().UTC().Format(time.RFC3339Nano),
+							ModemCh:    sf.SmCh,
+							From:       sf.From,
+							To:         sf.To,
+							FrameType:  sf.FrameType,
+							ReceivedAt: sf.ReceivedAt.UTC().Format(time.RFC3339Nano),
 							Frame:      ax25,
 						}
-						if !math.IsNaN(float64(snrVal)) {
-							v := float64(snrVal)
+						if sf.SNR != nil {
+							v := float64(*sf.SNR)
 							msg.SNR = &v
 						}
 						if payload, err := json.Marshal(msg); err == nil {

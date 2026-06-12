@@ -630,6 +630,35 @@ func startHTTPServer(listenAddr string, mgr *channelManager, hub *sseHub, uiPass
 	})
 
 	// -----------------------------------------------------------------------
+	// GET /api/stats — lifetime per-(channel, callsign, sm_ch) statistics
+	//
+	// Query parameters (all optional):
+	//   channel   — filter to one channel label
+	//   callsign  — case-insensitive exact match on source callsign
+	//   sm_ch     — modem sub-channel 0–3
+	// -----------------------------------------------------------------------
+	mux.HandleFunc("/api/stats", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		q := r.URL.Query()
+		channel := q.Get("channel")
+		callsign := q.Get("callsign")
+		smCh := -1
+		if s := q.Get("sm_ch"); s != "" {
+			if n, err := strconv.Atoi(s); err == nil {
+				smCh = n
+			}
+		}
+		results := globalStats.Query(channel, callsign, smCh)
+		if results == nil {
+			results = []statEntry{}
+		}
+		writeJSON(w, results)
+	})
+
+	// -----------------------------------------------------------------------
 	// GET /api/audio/{label} — streaming WAV audio preview (12 kHz mono S16LE)
 	//
 	// Sends a WAV header followed by a continuous stream of raw PCM chunks
