@@ -152,7 +152,7 @@ window.SNRHistory = (() => {
   // -------------------------------------------------------------------------
   async function fetchChannels() {
     try {
-      const resp = await fetch((window.BASE || '') + '/api/channels');
+      const resp = await fetch(((window.BASE_PATH || '').replace(/\/$/, '')) + '/api/channels');
       if (!resp.ok) return;
       const list = await resp.json();
       channels = list.map(ch => ({
@@ -231,7 +231,7 @@ window.SNRHistory = (() => {
     loading = true;
     setStatus('Loading…');
     try {
-      const url = (window.BASE || '') +
+      const url = ((window.BASE_PATH || '').replace(/\/$/, '')) +
         '/api/frames?channel=' + encodeURIComponent(selChannel) +
         '&from_exact=' + encodeURIComponent(selSender) +
         '&limit=1000';
