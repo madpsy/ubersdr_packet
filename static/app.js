@@ -231,10 +231,14 @@ function showApiDocs() {
     // ── Channels ────────────────────────────────────────────────────────────
     section('Channels'),
     endpoint('GET', '/api/channels',
-      'List all configured channels with modem config, connection status, and senders seen.',
+      'List all configured channels with modem config, connection status, and senders seen. ' +
+      'Each channel includes a <code>senders</code> array of unique <code>(callsign, sm_ch)</code> pairs ' +
+      'observed in the frame buffer, with <code>frame_count</code>, <code>last_seen</code>, and ' +
+      '<code>snr_available</code> (true when at least one frame has SNR data). ' +
+      '<code>sm_ch</code> is the modem sub-channel index (0=A, 1=B, 2=C, 3=D).',
       [`curl '${base}/api/channels'`]),
     endpoint('GET', '/api/channels/{label}',
-      'Get a single channel by its label.',
+      'Get a single channel by its label. Returns the same structure as the list endpoint.',
       [`curl '${base}/api/channels/7049450_usb'`]),
     endpoint('POST', '/api/channels',
       'Add a new channel. Requires authentication when a UI password is set.',

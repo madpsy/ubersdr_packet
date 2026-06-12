@@ -412,36 +412,43 @@ func (pc *packetChannel) queryFrames(smCh, limit int, from, to, fromExact, toExa
 	return result
 }
 
-// senderInfo summarises one unique source callsign seen in the frame store.
+// senderInfo summarises one unique source callsign seen in the frame store,
+// broken down per modem sub-channel.
 type senderInfo struct {
 	Callsign     string    `json:"callsign"`
+	SmCh         int       `json:"sm_ch"` // modem sub-channel (0–3)
 	FrameCount   int       `json:"frame_count"`
 	LastSeen     time.Time `json:"last_seen"`
 	SNRAvailable bool      `json:"snr_available"` // true if at least one frame has SNR data
 }
 
-// senders returns a deduplicated list of source callsigns seen in the frame
-// store, sorted by last-seen descending (most recent first).
+// senders returns a deduplicated list of (callsign, sm_ch) pairs seen in the
+// frame store, sorted by last-seen descending (most recent first).
 func (pc *packetChannel) senders() []senderInfo {
 	pc.frameMu.RLock()
 	frames := make([]storedFrame, len(pc.frames))
 	copy(frames, pc.frames)
 	pc.frameMu.RUnlock()
 
+	type key struct {
+		callsign string
+		smCh     int
+	}
 	type agg struct {
 		count    int
 		lastSeen time.Time
 		hasSNR   bool
 	}
-	m := make(map[string]*agg)
+	m := make(map[key]*agg)
 	for _, f := range frames {
 		if f.From == "" {
 			continue
 		}
-		a := m[f.From]
+		k := key{f.From, f.SmCh}
+		a := m[k]
 		if a == nil {
 			a = &agg{}
-			m[f.From] = a
+			m[k] = a
 		}
 		a.count++
 		if f.ReceivedAt.After(a.lastSeen) {
@@ -453,9 +460,10 @@ func (pc *packetChannel) senders() []senderInfo {
 	}
 
 	result := make([]senderInfo, 0, len(m))
-	for call, a := range m {
+	for k, a := range m {
 		result = append(result, senderInfo{
-			Callsign:     call,
+			Callsign:     k.callsign,
+			SmCh:         k.smCh,
 			FrameCount:   a.count,
 			LastSeen:     a.lastSeen,
 			SNRAvailable: a.hasSNR,

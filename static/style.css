@@ -945,6 +945,25 @@ body.mqtt-enabled .mqtt-prefix-row {
   min-width: 160px;
 }
 .snrh-select:focus { outline: 1px solid var(--accent); }
+/* Compact sub-channel selector (A/B/C/D) */
+.snrh-sm-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.snrh-sm-row.hidden { display: none; }
+.snrh-select-sm { min-width: 70px; }
+.snrh-auto-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.82em;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.snrh-auto-chk { accent-color: var(--accent); cursor: pointer; }
 
 .snrh-meta {
   display: flex;

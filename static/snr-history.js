@@ -5,25 +5,39 @@
  *   SNRHistory.open()              — open modal with no pre-selection
  *
  * Depends on:
- *   window.BASE  (set by app.js)
+ *   window.BASE_PATH  (set by the Go template in index.html / snr.html)
  */
 'use strict';
 
 window.SNRHistory = (() => {
   // -------------------------------------------------------------------------
+  // Helpers
+  // -------------------------------------------------------------------------
+  const BASE = () => (window.BASE_PATH || '').replace(/\/$/, '');
+
+  // Sub-channel index → label
+  const SM_CH_LABELS = ['A', 'B', 'C', 'D'];
+
+  // -------------------------------------------------------------------------
   // State
   // -------------------------------------------------------------------------
-  let channels   = [];   // [{label, senders:[{callsign,frame_count,last_seen,snr_available}]}]
-  let selChannel = '';   // currently selected channel label
-  let selSender  = '';   // currently selected callsign
-  let frames     = [];   // [{received_at, snr}] newest-first from API
-  let loading    = false;
+  let channels    = [];   // [{label, name, modemChannels:[{enabled,label}], senders:[{callsign,sm_ch,...}]}]
+  let selChannel  = '';   // currently selected channel label
+  let selSmCh     = -1;   // currently selected modem sub-channel (-1 = all)
+  let selSender   = '';   // currently selected callsign
+  let frames      = [];   // [{received_at, snr}] newest-first from API
+  let loading     = false;
+  let autoRefresh = false;
+  let autoTimer   = null;
+
+  const AUTO_INTERVAL_MS = 5000;
 
   // -------------------------------------------------------------------------
   // DOM refs (populated on first open)
   // -------------------------------------------------------------------------
-  let modal, overlay, selCh, selSnd, canvas, ctx,
-      statusEl, titleEl, countEl, refreshBtn, closeBtn;
+  let modal, overlay, selCh, selSm, selSnd, canvas, ctx,
+      statusEl, titleEl, countEl, refreshBtn, closeBtn,
+      smRow, autoChk;
 
   // -------------------------------------------------------------------------
   // Build DOM (once)
@@ -60,6 +74,7 @@ window.SNRHistory = (() => {
     const controls = document.createElement('div');
     controls.className = 'snrh-controls';
 
+    // Channel selector
     const lbCh = document.createElement('label');
     lbCh.className = 'snrh-label';
     lbCh.textContent = 'Channel:';
@@ -68,11 +83,34 @@ window.SNRHistory = (() => {
     selCh.className = 'snrh-select';
     selCh.addEventListener('change', () => {
       selChannel = selCh.value;
+      selSmCh    = -1;
       selSender  = '';
+      populateSmChannels();
       populateSenders();
       loadData();
     });
 
+    // Modem sub-channel selector (A/B/C/D)
+    smRow = document.createElement('span');
+    smRow.className = 'snrh-sm-row hidden';
+
+    const lbSm = document.createElement('label');
+    lbSm.className = 'snrh-label';
+    lbSm.textContent = 'Sub-ch:';
+
+    selSm = document.createElement('select');
+    selSm.className = 'snrh-select snrh-select-sm';
+    selSm.addEventListener('change', () => {
+      selSmCh   = parseInt(selSm.value, 10);
+      selSender = '';
+      populateSenders();
+      loadData();
+    });
+
+    smRow.appendChild(lbSm);
+    smRow.appendChild(selSm);
+
+    // Sender selector
     const lbSnd = document.createElement('label');
     lbSnd.className = 'snrh-label';
     lbSnd.textContent = 'Sender:';
@@ -91,11 +129,28 @@ window.SNRHistory = (() => {
       fetchChannels().then(loadData);
     });
 
+    // Auto-refresh checkbox
+    const autoWrap = document.createElement('label');
+    autoWrap.className = 'snrh-auto-label';
+    autoChk = document.createElement('input');
+    autoChk.type = 'checkbox';
+    autoChk.className = 'snrh-auto-chk';
+    autoChk.checked = false;
+    autoChk.addEventListener('change', () => {
+      autoRefresh = autoChk.checked;
+      if (autoRefresh) startAutoRefresh();
+      else             stopAutoRefresh();
+    });
+    autoWrap.appendChild(autoChk);
+    autoWrap.appendChild(document.createTextNode(' Auto (5s)'));
+
     controls.appendChild(lbCh);
     controls.appendChild(selCh);
+    controls.appendChild(smRow);
     controls.appendChild(lbSnd);
     controls.appendChild(selSnd);
     controls.appendChild(refreshBtn);
+    controls.appendChild(autoWrap);
 
     // ── Status / count ──
     const meta = document.createElement('div');
@@ -152,14 +207,22 @@ window.SNRHistory = (() => {
   // -------------------------------------------------------------------------
   async function fetchChannels() {
     try {
-      const resp = await fetch(((window.BASE_PATH || '').replace(/\/$/, '')) + '/api/channels');
+      const resp = await fetch(BASE() + '/api/channels');
       if (!resp.ok) return;
       const list = await resp.json();
-      channels = list.map(ch => ({
-        label:   ch.label,
-        name:    ch.name || ch.label,
-        senders: (ch.senders || []).filter(s => s.snr_available),
-      }));
+      channels = list.map(ch => {
+        // Build modem sub-channel list from modem_config
+        const smChannels = ((ch.modem_config || {}).channels || []);
+        const modemChannels = smChannels
+          .map((c, i) => ({ idx: i, enabled: c.enabled !== false, label: SM_CH_LABELS[i] || String(i) }))
+          .filter(c => c.enabled);
+        return {
+          label:         ch.label,
+          name:          ch.name || ch.label,
+          modemChannels,
+          senders:       (ch.senders || []).filter(s => s.snr_available),
+        };
+      });
       populateChannels();
     } catch (e) {
       console.warn('[snr-history] fetchChannels:', e);
@@ -189,12 +252,47 @@ window.SNRHistory = (() => {
     } else {
       selChannel = '';
     }
+    populateSmChannels();
     populateSenders();
+  }
+
+  function populateSmChannels() {
+    const ch = channels.find(c => c.label === selChannel);
+    const modemChannels = ch ? ch.modemChannels : [];
+
+    // Only show sub-channel selector when there are multiple modem channels
+    if (modemChannels.length <= 1) {
+      smRow.classList.add('hidden');
+      selSmCh = modemChannels.length === 1 ? modemChannels[0].idx : -1;
+      return;
+    }
+
+    smRow.classList.remove('hidden');
+    selSm.innerHTML = '';
+
+    const allOpt = document.createElement('option');
+    allOpt.value = '-1';
+    allOpt.textContent = 'All';
+    selSm.appendChild(allOpt);
+
+    modemChannels.forEach(mc => {
+      const o = document.createElement('option');
+      o.value = String(mc.idx);
+      o.textContent = mc.label;
+      selSm.appendChild(o);
+    });
+
+    // Restore or default to All
+    selSm.value = String(selSmCh);
+    if (selSm.value === '') { selSm.value = '-1'; selSmCh = -1; }
   }
 
   function populateSenders() {
     const ch = channels.find(c => c.label === selChannel);
-    const senders = ch ? ch.senders : [];
+    // Filter senders by selected sub-channel
+    const senders = ch
+      ? ch.senders.filter(s => selSmCh === -1 || s.sm_ch === selSmCh)
+      : [];
 
     const prev = selSnd.value;
     selSnd.innerHTML = '';
@@ -205,13 +303,14 @@ window.SNRHistory = (() => {
 
     senders.forEach(s => {
       const o = document.createElement('option');
-      o.value = s.callsign;
+      o.value = s.callsign + ':' + s.sm_ch;  // unique key: callsign + sm_ch
       const ago = s.last_seen ? ' · ' + fmtAgo(new Date(s.last_seen)) : '';
-      o.textContent = `${s.callsign} (${s.frame_count} frames${ago})`;
+      const chLabel = SM_CH_LABELS[s.sm_ch] !== undefined ? ' [' + SM_CH_LABELS[s.sm_ch] + ']' : '';
+      o.textContent = `${s.callsign}${chLabel} (${s.frame_count} frames${ago})`;
       selSnd.appendChild(o);
     });
 
-    if (prev && senders.find(s => s.callsign === prev)) {
+    if (prev && senders.find(s => (s.callsign + ':' + s.sm_ch) === prev)) {
       selSnd.value = prev;
       selSender    = prev;
     } else {
@@ -220,8 +319,20 @@ window.SNRHistory = (() => {
     }
   }
 
+  // Parse the composite sender key back into {callsign, smCh}
+  function parseSenderKey(key) {
+    if (!key) return null;
+    const lastColon = key.lastIndexOf(':');
+    if (lastColon === -1) return { callsign: key, smCh: -1 };
+    return {
+      callsign: key.slice(0, lastColon),
+      smCh:     parseInt(key.slice(lastColon + 1), 10),
+    };
+  }
+
   async function loadData() {
-    if (!selChannel || !selSender) {
+    const parsed = parseSenderKey(selSender);
+    if (!selChannel || !parsed) {
       frames = [];
       setStatus('');
       draw();
@@ -231,10 +342,13 @@ window.SNRHistory = (() => {
     loading = true;
     setStatus('Loading…');
     try {
-      const url = ((window.BASE_PATH || '').replace(/\/$/, '')) +
+      let url = BASE() +
         '/api/frames?channel=' + encodeURIComponent(selChannel) +
-        '&from_exact=' + encodeURIComponent(selSender) +
+        '&from_exact=' + encodeURIComponent(parsed.callsign) +
         '&limit=1000';
+      if (parsed.smCh >= 0) {
+        url += '&sm_ch=' + parsed.smCh;
+      }
       const resp = await fetch(url);
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       const data = await resp.json();
@@ -442,6 +556,23 @@ window.SNRHistory = (() => {
   }
 
   // -------------------------------------------------------------------------
+  // Auto-refresh
+  // -------------------------------------------------------------------------
+  function startAutoRefresh() {
+    stopAutoRefresh();
+    autoTimer = setInterval(() => {
+      fetchChannels().then(loadData);
+    }, AUTO_INTERVAL_MS);
+  }
+
+  function stopAutoRefresh() {
+    if (autoTimer !== null) {
+      clearInterval(autoTimer);
+      autoTimer = null;
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // Helpers
   // -------------------------------------------------------------------------
   function setStatus(msg, count) {
@@ -475,13 +606,18 @@ window.SNRHistory = (() => {
       if (channelLabel) {
         selChannel = channelLabel;
         selCh.value = channelLabel;
+        populateSmChannels();
         populateSenders();
       }
       loadData();
     });
+
+    // Resume auto-refresh if checkbox was left checked
+    if (autoRefresh) startAutoRefresh();
   }
 
   function close() {
+    stopAutoRefresh();
     if (overlay) overlay.classList.add('hidden');
     document.body.style.overflow = '';
   }
