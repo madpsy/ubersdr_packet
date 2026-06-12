@@ -1505,7 +1505,7 @@ function renderChannelCard(ch) {
     return row;
   }
 
-  card._handleFrame = (data) => {
+  card._handleFrame = (data, receivedAt) => {
     if (data.length < 1) return;
     const type = data[0];
 
@@ -1524,7 +1524,7 @@ function renderChannelCard(ch) {
       }
 
       const entry = {
-        time:   new Date(),
+        time:   receivedAt || new Date(),
         smCh,
         hex:    Array.from(ax25).map(b => b.toString(16).padStart(2, '0')).join(' '),
         parsed,
@@ -1676,6 +1676,7 @@ function connectSSE() {
     try { env = JSON.parse(e.data); } catch (_) { return; }
 
     const channelId = env.channel_id;
+    const receivedAt = (env.received_at && env.received_at > 0) ? new Date(env.received_at) : new Date();
     let raw;
     try {
       const bin = atob(env.data);
@@ -1684,7 +1685,7 @@ function connectSSE() {
     } catch (_) { return; }
 
     const card = document.querySelector(`.channel-card[data-channel-id="${channelId}"]`);
-    if (card && card._handleFrame) card._handleFrame(raw);
+    if (card && card._handleFrame) card._handleFrame(raw, receivedAt);
   };
 }
 

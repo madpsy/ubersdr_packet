@@ -25,8 +25,9 @@ var staticFiles embed.FS
 // ---------------------------------------------------------------------------
 
 type sseEvent struct {
-	channelID string
-	data      []byte
+	channelID  string
+	data       []byte
+	receivedAt time.Time
 }
 
 type sseClient struct {
@@ -106,7 +107,7 @@ func (h *sseHub) unsubscribe(c *sseClient) {
 }
 
 func (h *sseHub) broadcast(channelID string, data []byte) {
-	ev := sseEvent{channelID: channelID, data: data}
+	ev := sseEvent{channelID: channelID, data: data, receivedAt: time.Now()}
 	h.mu.Lock()
 	// Store in ring buffer (only AX.25 packet frames — type byte 0x20).
 	// Skip DCD (0x23), monitor (0x24), log (0x25) — those are ephemeral.
@@ -515,8 +516,9 @@ func startHTTPServer(listenAddr string, mgr *channelManager, hub *sseHub, uiPass
 				}
 				// Binary data encoded as base64 inside a JSON envelope.
 				env := map[string]interface{}{
-					"channel_id": ev.channelID,
-					"data":       ev.data, // json.Marshal base64-encodes []byte
+					"channel_id":  ev.channelID,
+					"data":        ev.data, // json.Marshal base64-encodes []byte
+					"received_at": ev.receivedAt.UnixMilli(),
 				}
 				b, _ := json.Marshal(env)
 				fmt.Fprintf(w, "data: %s\n\n", b)
