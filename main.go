@@ -575,24 +575,36 @@ func (pc *packetChannel) start(ctx context.Context, hub *sseHub, mq *mqttClient,
 						topic := defaultPrefix + "/" + suffix
 						ax25 := frame[10:]
 
+						pc.inst.mu.Lock()
+						instFreqHz := pc.inst.freqHz
+						instMode := pc.inst.audioMode
+						instCarrierHz := pc.inst.carrierHz
+						pc.inst.mu.Unlock()
+
 						type mqttMsg struct {
-							Channel    string   `json:"channel"`
-							ModemCh    int      `json:"modem_ch"`
-							From       string   `json:"from"`
-							To         string   `json:"to"`
-							FrameType  string   `json:"frame_type"`
-							SNR        *float64 `json:"snr"`
-							ReceivedAt string   `json:"received_at"`
-							Frame      []byte   `json:"frame"` // base64 by encoding/json
+							Channel      string   `json:"channel"`
+							ModemCh      int      `json:"modem_ch"`
+							From         string   `json:"from"`
+							To           string   `json:"to"`
+							FrameType    string   `json:"frame_type"`
+							SNR          *float64 `json:"snr"`
+							ReceivedAt   string   `json:"received_at"`
+							Frame        []byte   `json:"frame"` // base64 by encoding/json
+							FreqHz       int      `json:"freq_hz"`
+							Mode         string   `json:"mode"`
+							FreqOffsetHz int      `json:"freq_offset_hz"`
 						}
 						msg := mqttMsg{
-							Channel:    chLabel,
-							ModemCh:    sf.SmCh,
-							From:       sf.From,
-							To:         sf.To,
-							FrameType:  sf.FrameType,
-							ReceivedAt: sf.ReceivedAt.UTC().Format(time.RFC3339Nano),
-							Frame:      ax25,
+							Channel:      chLabel,
+							ModemCh:      sf.SmCh,
+							From:         sf.From,
+							To:           sf.To,
+							FrameType:    sf.FrameType,
+							ReceivedAt:   sf.ReceivedAt.UTC().Format(time.RFC3339Nano),
+							Frame:        ax25,
+							FreqHz:       instFreqHz,
+							Mode:         instMode,
+							FreqOffsetHz: instCarrierHz,
 						}
 						if sf.SNR != nil {
 							v := float64(*sf.SNR)

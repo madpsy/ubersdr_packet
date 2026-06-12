@@ -6,11 +6,14 @@
 // is published to <prefix>/<channel_label> as a JSON object:
 //
 //	{
-//	  "channel":     "7049450_usb",   // channel label
-//	  "modem_ch":    0,               // QtSoundModem sub-channel (0–3)
-//	  "snr":         42.3,            // dB, omitted (null) when unavailable
-//	  "received_at": "2024-01-01T…",  // RFC3339Nano UTC timestamp
-//	  "frame":       "<base64>"       // raw AX.25 bytes, base64-encoded
+//	  "channel":        "7049450_usb",   // channel label
+//	  "modem_ch":       0,               // QtSoundModem sub-channel (0–3)
+//	  "snr":            42.3,            // dB, omitted (null) when unavailable
+//	  "received_at":    "2024-01-01T…",  // RFC3339Nano UTC timestamp
+//	  "frame":          "<base64>",      // raw AX.25 bytes, base64-encoded
+//	  "freq_hz":        7049450,         // dial (VFO) frequency in Hz
+//	  "mode":           "usb",           // demodulation mode ("usb" or "lsb")
+//	  "freq_offset_hz": 1700             // carrier offset from dial freq in Hz
 //	}
 //
 // TLS is enabled automatically when the broker URL uses the ssl:// or tls://
