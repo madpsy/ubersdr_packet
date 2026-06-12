@@ -268,7 +268,9 @@ function showApiDocs() {
     section('Frames'),
     endpoint('GET', '/api/frames',
       'Query decoded AX.25 frames from the server-side ring buffer (up to 1000). ' +
-      'Use <code>channel=*</code> to aggregate across all channels.',
+      'Use <code>channel=*</code> to aggregate across all channels. ' +
+      'Use <code>fields=snr</code> to return a minimal projection of only ' +
+      '<code>received_at</code> and <code>snr</code> — useful for SNR history charts.',
       [
         `# Last 20 frames on a channel`,
         `curl '${base}/api/frames?channel=7049450_usb&limit=20'`,
@@ -293,11 +295,15 @@ function showApiDocs() {
         ``,
         `# Time range (RFC3339)`,
         `curl '${base}/api/frames?channel=7049450_usb&from=2024-01-01T00:00:00Z&to=2024-01-02T00:00:00Z'`,
+        ``,
+        `# SNR-only projection (minimal payload for charting)`,
+        `curl '${base}/api/frames?channel=7049450_usb&from_exact=G0ABC-9&limit=1000&fields=snr'`,
       ],
       'Response: JSON array of frame objects. Each object: ' +
       '<code>channel</code>, <code>sm_ch</code>, <code>from</code>, <code>to</code>, ' +
       '<code>via</code> (array), <code>info</code> (string), <code>snr</code> (dB float or null), ' +
-      '<code>received_at</code> (RFC3339Nano).'),
+      '<code>received_at</code> (RFC3339Nano). ' +
+      'With <code>fields=snr</code>: only <code>received_at</code> and <code>snr</code> are returned.'),
 
     // ── Stats ─────────────────────────────────────────────────────────────────
     section('Statistics'),

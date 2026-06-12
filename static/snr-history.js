@@ -345,7 +345,8 @@ window.SNRHistory = (() => {
       let url = BASE() +
         '/api/frames?channel=' + encodeURIComponent(selChannel) +
         '&from_exact=' + encodeURIComponent(parsed.callsign) +
-        '&limit=1000';
+        '&limit=1000' +
+        '&fields=snr';
       if (parsed.smCh >= 0) {
         url += '&sm_ch=' + parsed.smCh;
       }

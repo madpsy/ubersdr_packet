@@ -560,6 +560,8 @@ func startHTTPServer(listenAddr string, mgr *channelManager, hub *sseHub, uiPass
 	//   from_exact — case-insensitive exact match on source callsign (e.g. "VK2XYZ-9")
 	//   to_exact   — case-insensitive exact match on destination callsign
 	//   search     — case-insensitive substring match against from/to/via/info
+	//   fields     — comma-separated field projection; "snr" returns only
+	//                {received_at, snr} (useful for SNR history charts)
 	// -----------------------------------------------------------------------
 	mux.HandleFunc("/api/frames", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -597,6 +599,15 @@ func startHTTPServer(listenAddr string, mgr *channelManager, hub *sseHub, uiPass
 		toExact := q.Get("to_exact")
 		search := q.Get("search")
 
+		// fields: optional projection — "snr" returns minimal {received_at, snr}
+		fieldsSnrOnly := false
+		for _, f := range strings.Split(q.Get("fields"), ",") {
+			if strings.TrimSpace(f) == "snr" {
+				fieldsSnrOnly = true
+				break
+			}
+		}
+
 		var results []storedFrame
 
 		if channelLabel == "*" {
@@ -626,6 +637,21 @@ func startHTTPServer(listenAddr string, mgr *channelManager, hub *sseHub, uiPass
 		if results == nil {
 			results = []storedFrame{}
 		}
+
+		// Project to minimal SNR-only payload when requested.
+		if fieldsSnrOnly {
+			type snrPoint struct {
+				ReceivedAt time.Time `json:"received_at"`
+				SNR        *float32  `json:"snr"`
+			}
+			out := make([]snrPoint, len(results))
+			for i, f := range results {
+				out[i] = snrPoint{ReceivedAt: f.ReceivedAt, SNR: f.SNR}
+			}
+			writeJSON(w, out)
+			return
+		}
+
 		writeJSON(w, results)
 	})
 
