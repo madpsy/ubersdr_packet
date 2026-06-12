@@ -988,16 +988,19 @@ function drawWaterfallOverlay(ovlCtx, channelFreqs, mouseX, txEvents, currentLin
       }
 
       // Callsign label — centred on the channel centre frequency
+      // Format: "FROM → TO (SNR dB)" or "FROM → TO" if no SNR
       const labelY = Math.max(y1 + 2, 2);
       if (labelY < h - 4) {
         ovlCtx.font         = 'bold 10px monospace';
         ovlCtx.textAlign    = 'center';
         ovlCtx.textBaseline = 'top';
-        const label = ev.callsign;
-        const xCtr  = Math.round((chCfg.freq / WF_MAX_FREQ) * w);
-        const tw    = ovlCtx.measureText(label).width;
+        const snrStr = ev.snr != null ? ` (${Math.round(ev.snr)} dB)` : '';
+        const toStr  = ev.to  ? ` \u2192 ${ev.to}` : '';
+        const label  = ev.callsign + toStr + snrStr;
+        const xCtr   = Math.round((chCfg.freq / WF_MAX_FREQ) * w);
+        const tw     = ovlCtx.measureText(label).width;
         // Clamp so the label doesn't overflow the canvas edges
-        const cx    = Math.max(tw / 2 + 2, Math.min(w - tw / 2 - 2, xCtr));
+        const cx     = Math.max(tw / 2 + 2, Math.min(w - tw / 2 - 2, xCtr));
         ovlCtx.fillStyle = 'rgba(0,0,0,0.75)';
         ovlCtx.fillRect(cx - tw / 2 - 2, labelY - 1, tw + 4, 12);
         ovlCtx.fillStyle = color;
@@ -1260,6 +1263,8 @@ function attachWaterfall(wfWrap, label, channelFreqs) {
       // bufferLines shifts the marker forward to compensate for audio buffering.
       txEvents.push({
         callsign:      entry.from,
+        to:            entry.to  || '',
+        snr:           isNaN(entry.snr) ? null : entry.snr,
         smCh:          entry.smCh,
         startLine:     wfLineCount - durationLines + bufferLines,
         durationLines,
