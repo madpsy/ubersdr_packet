@@ -424,17 +424,47 @@ function showApiDocs() {
     section('MQTT'),
     `<div class="apidocs-endpoint">
       <p class="apidocs-desc">
-        When an MQTT broker is configured, every decoded AX.25 frame is published as JSON to
-        <code>&lt;prefix&gt;/&lt;channel_label&gt;</code> (default prefix: <code>ubersdr</code>).
-      </p>` +
+        When an MQTT broker is configured, every decoded AX.25 frame is published to
+        <strong>two topics</strong> simultaneously (default prefix: <code>ubersdr</code>):
+      </p>
+      <p class="apidocs-desc">
+        ● <code>&lt;prefix&gt;/&lt;channel&gt;/raw</code> — minimal RF/signal-level payload (no AX.25 addressing)<br>
+        ● <code>&lt;prefix&gt;/&lt;channel&gt;/&lt;sm_ch&gt;/&lt;from&gt;/&lt;to&gt;</code> — full decoded payload for targeted subscriptions
+      </p>
+      <p class="apidocs-note">
+        <code>sm_ch</code> is the modem sub-channel letter (A–D).
+        Useful wildcard patterns:
+        <code>ubersdr/7049450_usb/raw</code> (all frames on a channel) ·
+        <code>ubersdr/7049450_usb/+/G0ABC-9/#</code> (all frames from one callsign) ·
+        <code>ubersdr/7049450_usb/+/+/APRS</code> (all frames to APRS).
+      </p>
+    </div>` +
       rawBlock([
-        `# Subscribe to all frames:`,
+        `# Subscribe to everything:`,
         `mosquitto_sub -h broker.example.com -t 'ubersdr/#' -v`,
         ``,
-        `# Example message on topic  ubersdr/7049450_usb :`,
+        `# Subscribe to all frames on one channel (raw firehose):`,
+        `mosquitto_sub -h broker.example.com -t 'ubersdr/7049450_usb/raw' -v`,
+        ``,
+        `# Subscribe to all frames from one callsign (any sub-channel):`,
+        `mosquitto_sub -h broker.example.com -t 'ubersdr/7049450_usb/+/G0ABC-9/#' -v`,
+        ``,
+        `# Raw topic payload  (ubersdr/7049450_usb/raw):`,
         `{`,
         `  "channel":        "7049450_usb",`,
-        `  "modem_ch":       0,`,
+        `  "modem_ch":       "A",`,
+        `  "snr":            42.3,`,
+        `  "received_at":    "2024-01-01T12:00:00.000000000Z",`,
+        `  "frame":          "<base64-encoded raw AX.25 bytes>",`,
+        `  "freq_hz":        7049450,`,
+        `  "mode":           "usb",`,
+        `  "freq_offset_hz": 1700`,
+        `}`,
+        ``,
+        `# Structured topic payload  (ubersdr/7049450_usb/A/G0ABC-9/APRS):`,
+        `{`,
+        `  "channel":        "7049450_usb",`,
+        `  "modem_ch":       "A",`,
         `  "from":           "G0ABC-9",`,
         `  "to":             "APRS",`,
         `  "frame_type":     "aprs",`,

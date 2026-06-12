@@ -3,18 +3,38 @@
 // The broker URL, credentials and TLS settings are global (set once at startup
 // via environment variables / CLI flags).  Each audio channel can optionally
 // specify a topic prefix; when set, every decoded AX.25 frame for that channel
-// is published to <prefix>/<channel_label> as a JSON object:
+// is published to TWO topics simultaneously:
 //
-//	{
-//	  "channel":        "7049450_usb",   // channel label
-//	  "modem_ch":       0,               // QtSoundModem sub-channel (0–3)
-//	  "snr":            42.3,            // dB, omitted (null) when unavailable
-//	  "received_at":    "2024-01-01T…",  // RFC3339Nano UTC timestamp
-//	  "frame":          "<base64>",      // raw AX.25 bytes, base64-encoded
-//	  "freq_hz":        7049450,         // dial (VFO) frequency in Hz
-//	  "mode":           "usb",           // demodulation mode ("usb" or "lsb")
-//	  "freq_offset_hz": 1700             // carrier offset from dial freq in Hz
-//	}
+//  1. Raw topic — <prefix>/<channel>/raw
+//     Minimal RF/signal-level payload (no decoded AX.25 addressing):
+//
+//     {
+//     "channel":        "7049450_usb",
+//     "modem_ch":       "A",            // sub-channel letter (A–D)
+//     "snr":            42.3,           // dB, null when unavailable
+//     "received_at":    "2024-01-01T…", // RFC3339Nano UTC
+//     "frame":          "<base64>",     // raw AX.25 bytes, base64-encoded
+//     "freq_hz":        7049450,        // dial (VFO) frequency in Hz
+//     "mode":           "usb",          // demodulation mode ("usb" or "lsb")
+//     "freq_offset_hz": 1700            // carrier offset from dial freq in Hz
+//     }
+//
+//  2. Structured topic — <prefix>/<channel>/<sm_ch>/<from>/<to>
+//     Full decoded AX.25 payload for targeted subscriptions:
+//
+//     {
+//     "channel":        "7049450_usb",
+//     "modem_ch":       "A",
+//     "from":           "G0ABC-9",
+//     "to":             "APRS",
+//     "frame_type":     "aprs",
+//     "snr":            42.3,
+//     "received_at":    "2024-01-01T…",
+//     "frame":          "<base64>",
+//     "freq_hz":        7049450,
+//     "mode":           "usb",
+//     "freq_offset_hz": 1700
+//     }
 //
 // TLS is enabled automatically when the broker URL uses the ssl:// or tls://
 // scheme.  Set TLSSkipVerify=true to accept self-signed certificates.

@@ -572,7 +572,7 @@ func (pc *packetChannel) start(ctx context.Context, hub *sseHub, mq *mqttClient,
 						if suffix == "" {
 							suffix = chLabel
 						}
-						topic := defaultPrefix + "/" + suffix
+						base := defaultPrefix + "/" + suffix
 						ax25 := frame[10:]
 
 						pc.inst.mu.Lock()
@@ -581,37 +581,92 @@ func (pc *packetChannel) start(ctx context.Context, hub *sseHub, mq *mqttClient,
 						instCarrierHz := pc.inst.carrierHz
 						pc.inst.mu.Unlock()
 
-						type mqttMsg struct {
+						// smChLabel converts a modem sub-channel index to its
+						// letter label (0→A, 1→B, 2→C, 3→D).
+						smChLabels := [...]string{"A", "B", "C", "D"}
+						smChLabel := "A"
+						if sf.SmCh >= 0 && sf.SmCh < len(smChLabels) {
+							smChLabel = smChLabels[sf.SmCh]
+						}
+
+						// mqttSanitise makes a string safe for use as an MQTT
+						// topic level by replacing the three reserved characters
+						// and falling back to "unknown" for empty strings.
+						mqttSanitise := func(s string) string {
+							s = strings.NewReplacer("/", "_", "+", "_", "#", "_").Replace(s)
+							if s == "" {
+								return "unknown"
+							}
+							return s
+						}
+
+						fromSeg := mqttSanitise(sf.From)
+						toSeg := mqttSanitise(sf.To)
+
+						var snrPtr *float64
+						if sf.SNR != nil {
+							v := float64(*sf.SNR)
+							snrPtr = &v
+						}
+
+						// ── Raw topic: <base>/raw ─────────────────────────────
+						// Minimal payload — RF/signal-level fields only, no
+						// decoded AX.25 addressing.
+						type mqttRaw struct {
 							Channel      string   `json:"channel"`
-							ModemCh      int      `json:"modem_ch"`
-							From         string   `json:"from"`
-							To           string   `json:"to"`
-							FrameType    string   `json:"frame_type"`
+							ModemCh      string   `json:"modem_ch"`
 							SNR          *float64 `json:"snr"`
 							ReceivedAt   string   `json:"received_at"`
-							Frame        []byte   `json:"frame"` // base64 by encoding/json
+							Frame        []byte   `json:"frame"`
 							FreqHz       int      `json:"freq_hz"`
 							Mode         string   `json:"mode"`
 							FreqOffsetHz int      `json:"freq_offset_hz"`
 						}
-						msg := mqttMsg{
+						rawMsg := mqttRaw{
 							Channel:      chLabel,
-							ModemCh:      sf.SmCh,
-							From:         sf.From,
-							To:           sf.To,
-							FrameType:    sf.FrameType,
+							ModemCh:      smChLabel,
+							SNR:          snrPtr,
 							ReceivedAt:   sf.ReceivedAt.UTC().Format(time.RFC3339Nano),
 							Frame:        ax25,
 							FreqHz:       instFreqHz,
 							Mode:         instMode,
 							FreqOffsetHz: instCarrierHz,
 						}
-						if sf.SNR != nil {
-							v := float64(*sf.SNR)
-							msg.SNR = &v
+						if rawPayload, err := json.Marshal(rawMsg); err == nil {
+							mq.Publish(base+"/raw", rawPayload)
 						}
+
+						// ── Structured topic: <base>/<sm_ch>/<from>/<to> ─────
+						// Full decoded AX.25 payload for targeted subscriptions.
+						type mqttMsg struct {
+							Channel      string   `json:"channel"`
+							ModemCh      string   `json:"modem_ch"`
+							From         string   `json:"from"`
+							To           string   `json:"to"`
+							FrameType    string   `json:"frame_type"`
+							SNR          *float64 `json:"snr"`
+							ReceivedAt   string   `json:"received_at"`
+							Frame        []byte   `json:"frame"`
+							FreqHz       int      `json:"freq_hz"`
+							Mode         string   `json:"mode"`
+							FreqOffsetHz int      `json:"freq_offset_hz"`
+						}
+						msg := mqttMsg{
+							Channel:      chLabel,
+							ModemCh:      smChLabel,
+							From:         sf.From,
+							To:           sf.To,
+							FrameType:    sf.FrameType,
+							SNR:          snrPtr,
+							ReceivedAt:   sf.ReceivedAt.UTC().Format(time.RFC3339Nano),
+							Frame:        ax25,
+							FreqHz:       instFreqHz,
+							Mode:         instMode,
+							FreqOffsetHz: instCarrierHz,
+						}
+						structuredTopic := base + "/" + smChLabel + "/" + fromSeg + "/" + toSeg
 						if payload, err := json.Marshal(msg); err == nil {
-							mq.Publish(topic, payload)
+							mq.Publish(structuredTopic, payload)
 						}
 					}
 				}
