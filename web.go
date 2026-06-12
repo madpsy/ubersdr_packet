@@ -12,6 +12,8 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -547,6 +549,87 @@ func startHTTPServer(listenAddr string, mgr *channelManager, hub *sseHub, uiPass
 	})
 
 	// -----------------------------------------------------------------------
+	// GET /api/frames — query decoded AX.25 frames from the server-side ring buffer
+	//
+	// Query parameters:
+	//   channel    — channel label (required; use "*" for all channels)
+	//   sm_ch      — modem sub-channel 0–3 (omit or -1 for all)
+	//   limit      — max frames to return (default 20; 0 = all matching)
+	//   from       — case-insensitive prefix match on source callsign
+	//   to         — case-insensitive prefix match on destination callsign
+	//   from_exact — case-insensitive exact match on source callsign (e.g. "VK2XYZ-9")
+	//   to_exact   — case-insensitive exact match on destination callsign
+	//   search     — case-insensitive substring match against from/to/via/info
+	// -----------------------------------------------------------------------
+	mux.HandleFunc("/api/frames", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		q := r.URL.Query()
+
+		channelLabel := q.Get("channel")
+		if channelLabel == "" {
+			http.Error(w, `{"error":"channel parameter required"}`, http.StatusBadRequest)
+			return
+		}
+
+		// sm_ch: default -1 (all sub-channels)
+		smCh := -1
+		if s := q.Get("sm_ch"); s != "" {
+			if n, err := strconv.Atoi(s); err == nil {
+				smCh = n
+			}
+		}
+
+		// limit: default 20; 0 = all
+		limit := 20
+		if s := q.Get("limit"); s != "" {
+			if n, err := strconv.Atoi(s); err == nil && n >= 0 {
+				limit = n
+			}
+		}
+
+		from := q.Get("from")
+		to := q.Get("to")
+		fromExact := q.Get("from_exact")
+		toExact := q.Get("to_exact")
+		search := q.Get("search")
+
+		var results []storedFrame
+
+		if channelLabel == "*" {
+			// Aggregate across all channels, sort newest-first, then apply limit.
+			channels := mgr.list()
+			for _, pc := range channels {
+				// queryFrames returns newest-first per channel; collect all unfiltered
+				frames := pc.queryFrames(smCh, 0, from, to, fromExact, toExact, search)
+				results = append(results, frames...)
+			}
+			// Sort the merged slice newest-first by ReceivedAt.
+			sort.Slice(results, func(i, j int) bool {
+				return results[i].ReceivedAt.After(results[j].ReceivedAt)
+			})
+			if limit > 0 && len(results) > limit {
+				results = results[:limit]
+			}
+		} else {
+			pc := mgr.get(channelLabel)
+			if pc == nil {
+				http.Error(w, `{"error":"channel not found"}`, http.StatusNotFound)
+				return
+			}
+			results = pc.queryFrames(smCh, limit, from, to, fromExact, toExact, search)
+		}
+
+		if results == nil {
+			results = []storedFrame{}
+		}
+		writeJSON(w, results)
+	})
+
+	// -----------------------------------------------------------------------
 	// GET /api/audio/{label} — streaming WAV audio preview (12 kHz mono S16LE)
 	//
 	// Sends a WAV header followed by a continuous stream of raw PCM chunks
@@ -632,16 +715,20 @@ func startHTTPServer(listenAddr string, mgr *channelManager, hub *sseHub, uiPass
 	})
 
 	// -----------------------------------------------------------------------
-	// Static files — index.html served as a Go template so BASE_PATH can be
-	// injected from the X-Forwarded-Prefix header set by UberSDR's addon proxy.
+	// Static files — index.html and snr.html served as Go templates so
+	// BASE_PATH can be injected from the X-Forwarded-Prefix header set by
+	// UberSDR's addon proxy.
 	// -----------------------------------------------------------------------
-	indexTmpl, indexTmplErr := func() (*template.Template, error) {
-		data, err := staticFiles.ReadFile("static/index.html")
+	loadTmpl := func(name string) (*template.Template, error) {
+		data, err := staticFiles.ReadFile("static/" + name)
 		if err != nil {
 			return nil, err
 		}
-		return template.New("index").Parse(string(data))
-	}()
+		return template.New(name).Parse(string(data))
+	}
+
+	indexTmpl, indexTmplErr := loadTmpl("index.html")
+	snrTmpl, snrTmplErr := loadTmpl("snr.html")
 
 	basePath := func(r *http.Request) string {
 		return strings.TrimRight(r.Header.Get("X-Forwarded-Prefix"), "/")
@@ -654,7 +741,8 @@ func startHTTPServer(listenAddr string, mgr *channelManager, hub *sseHub, uiPass
 	staticHandler := http.FileServer(http.FS(sub))
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+		switch r.URL.Path {
+		case "/", "/index.html":
 			if indexTmplErr != nil {
 				http.Error(w, "template error: "+indexTmplErr.Error(), http.StatusInternalServerError)
 				return
@@ -662,9 +750,17 @@ func startHTTPServer(listenAddr string, mgr *channelManager, hub *sseHub, uiPass
 			bp := basePath(r)
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			indexTmpl.Execute(w, map[string]string{"BasePath": bp}) //nolint:errcheck
-			return
+		case "/snr", "/snr.html":
+			if snrTmplErr != nil {
+				http.Error(w, "template error: "+snrTmplErr.Error(), http.StatusInternalServerError)
+				return
+			}
+			bp := basePath(r)
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			snrTmpl.Execute(w, map[string]string{"BasePath": bp}) //nolint:errcheck
+		default:
+			staticHandler.ServeHTTP(w, r)
 		}
-		staticHandler.ServeHTTP(w, r)
 	})
 
 	log.Printf("[web] listening on %s", listenAddr)
@@ -680,6 +776,7 @@ func channelSnapshot(ch *packetChannel) map[string]interface{} {
 	ch.mu.Unlock()
 
 	instSnap := ch.inst.statusSnapshot()
+	senders := ch.senders()
 
 	return map[string]interface{}{
 		"id":                ch.channelID,
@@ -689,5 +786,6 @@ func channelSnapshot(ch *packetChannel) map[string]interface{} {
 		"instance":          instSnap,
 		"mqtt_topic_prefix": mqttPrefix,
 		"bandwidth_hz":      ch.inst.getBandwidth(),
+		"senders":           senders,
 	}
 }

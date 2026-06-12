@@ -12,6 +12,7 @@
     <div class="header-inner">
       <h1>UberSDR Packet</h1>
       <div class="header-actions">
+        <button id="btn-api-docs" class="btn btn-secondary btn-sm" onclick="showApiDocs()" title="API Documentation">?</button>
         <button id="login-btn" class="btn btn-secondary btn-sm hidden" onclick="showLoginModal()">Login</button>
         <span id="auth-authed" class="auth-authed hidden">Authenticated</span>
         <button id="logout-btn" class="btn btn-secondary btn-sm hidden" onclick="doLogout()">Logout</button>
@@ -80,6 +81,19 @@
     </div>
   </main>
 
+  <!-- API Docs modal -->
+  <div id="api-docs-modal" class="modal hidden">
+    <div class="modal-box apidocs-box">
+      <div class="apidocs-header">
+        <h2>API Reference</h2>
+        <button class="btn btn-secondary btn-sm" onclick="hideApiDocs()">✕ Close</button>
+      </div>
+      <div id="apidocs-body" class="apidocs-body">
+        <!-- populated by showApiDocs() in app.js -->
+      </div>
+    </div>
+  </div>
+
   <!-- Login modal -->
   <div id="login-modal" class="modal hidden">
     <div class="modal-box">
@@ -96,6 +110,7 @@
   </div>
 
   <script src="ax25decode.js"></script>
+  <script src="snr-history.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

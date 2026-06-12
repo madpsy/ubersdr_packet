@@ -1,9 +1,17 @@
-// mqtt.go — MQTT client for publishing raw KISS frames.
+// mqtt.go — MQTT client for publishing decoded AX.25 frames as JSON.
 //
 // The broker URL, credentials and TLS settings are global (set once at startup
 // via environment variables / CLI flags).  Each audio channel can optionally
-// specify a topic prefix; when set, every raw KISS frame decoded for that
-// channel is published to  <prefix>/<channel_label>.
+// specify a topic prefix; when set, every decoded AX.25 frame for that channel
+// is published to <prefix>/<channel_label> as a JSON object:
+//
+//	{
+//	  "channel":     "7049450_usb",   // channel label
+//	  "modem_ch":    0,               // QtSoundModem sub-channel (0–3)
+//	  "snr":         42.3,            // dB, omitted (null) when unavailable
+//	  "received_at": "2024-01-01T…",  // RFC3339Nano UTC timestamp
+//	  "frame":       "<base64>"       // raw AX.25 bytes, base64-encoded
+//	}
 //
 // TLS is enabled automatically when the broker URL uses the ssl:// or tls://
 // scheme.  Set TLSSkipVerify=true to accept self-signed certificates.

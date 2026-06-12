@@ -9,6 +9,9 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
+// nanF32 returns a float32 IEEE 754 quiet NaN.
+func nanF32() float32 { return float32(math.NaN()) }
+
 // ---------------------------------------------------------------------------
 // PCM binary packet decoder
 // ---------------------------------------------------------------------------
@@ -46,9 +49,11 @@ const (
 
 // pcmPacket is the result of decoding one binary WebSocket message.
 type pcmPacket struct {
-	pcm        []byte // little-endian int16 PCM samples
-	sampleRate int
-	channels   int
+	pcm          []byte // little-endian int16 PCM samples
+	sampleRate   int
+	channels     int
+	basebandDBFS float32 // signal power dBFS (v2 header only; NaN if unavailable)
+	noiseDBFS    float32 // noise floor dBFS  (v2 header only; NaN if unavailable)
 }
 
 type pcmDecoder struct {
@@ -104,10 +109,13 @@ func (d *pcmDecoder) decode(data []byte, isZstd bool) (pcmPacket, error) {
 		d.lastRate = pkt.sampleRate
 		d.lastChannels = pkt.channels
 
-		// v2 signal quality fields — read but not used in this addon
+		// v2 signal quality fields
 		if version == 2 {
-			_ = math.Float32frombits(binary.LittleEndian.Uint32(data[25:29])) // basebandDBFS
-			_ = math.Float32frombits(binary.LittleEndian.Uint32(data[29:33])) // noiseDBFS
+			pkt.basebandDBFS = math.Float32frombits(binary.LittleEndian.Uint32(data[25:29]))
+			pkt.noiseDBFS = math.Float32frombits(binary.LittleEndian.Uint32(data[29:33]))
+		} else {
+			pkt.basebandDBFS = nanF32()
+			pkt.noiseDBFS = nanF32()
 		}
 
 	case magicMinimal:
@@ -117,6 +125,8 @@ func (d *pcmDecoder) decode(data []byte, isZstd bool) (pcmPacket, error) {
 		raw = data[13:]
 		pkt.sampleRate = d.lastRate
 		pkt.channels = d.lastChannels
+		pkt.basebandDBFS = nanF32()
+		pkt.noiseDBFS = nanF32()
 		if pkt.sampleRate == 0 || pkt.channels == 0 {
 			return pcmPacket{}, fmt.Errorf("minimal header received before full header")
 		}

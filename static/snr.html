@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SNR Dashboard — UberSDR Packet</title>
+  <link rel="stylesheet" href="style.css">
+  <script>window.BASE_PATH = "{{.BasePath}}";</script>
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <h1><a href="." class="snrd-back">← UberSDR Packet</a> &nbsp;/&nbsp; SNR Dashboard</h1>
+      <div class="header-actions">
+        <button id="btn-refresh" class="btn btn-secondary btn-sm">↻ Refresh</button>
+        <span id="snrd-status" class="snrd-status"></span>
+      </div>
+    </div>
+  </header>
+
+  <main id="snrd-main">
+    <div id="snrd-empty" class="snrd-empty hidden">
+      No senders with SNR data found. Frames must be received before graphs appear.
+    </div>
+    <div id="snrd-grid" class="snrd-grid"></div>
+  </main>
+
+  <script src="snr-dashboard.js"></script>
+</body>
+</html>

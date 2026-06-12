@@ -8,7 +8,7 @@
 // Wire protocol sent on resultChan (backend → web layer):
 //
 //	0x20  AX.25 packet frame
-//	      [type:1=0x20][kiss_port:1][frame_len:4 uint32 BE][ax25_frame: N bytes]
+//	      [type:1=0x20][kiss_port:1][snr:4 float32 LE][frame_len:4 uint32 BE][ax25_frame: N bytes]
 //	0x21  Error
 //	      [type:1=0x21][msg_len:4 uint32 BE][msg: UTF-8]
 //	0x23  DCD activity pulse
@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net"
 	"os"
 	"os/exec"
@@ -47,13 +48,13 @@ const (
 	smPortBase = 18200
 	smPortSize = 100 // max concurrent channel instances
 
-	smKissConnectTimeout  = 10 * time.Second
-	smKissRetryInterval   = 200 * time.Millisecond
-	smAGWConnectTimeout   = 10 * time.Second
-	smAGWRetryInterval    = 200 * time.Millisecond
-	smKissReadBufSize     = 4096
-	smAGWHeaderSize       = 36
-	smStopTimeout         = 3 * time.Second
+	smKissConnectTimeout = 10 * time.Second
+	smKissRetryInterval  = 200 * time.Millisecond
+	smAGWConnectTimeout  = 10 * time.Second
+	smAGWRetryInterval   = 200 * time.Millisecond
+	smKissReadBufSize    = 4096
+	smAGWHeaderSize      = 36
+	smStopTimeout        = 3 * time.Second
 
 	kissFrameEnd  = 0xC0
 	kissFrameEsc  = 0xDB
@@ -68,11 +69,11 @@ const (
 	agwKindPortInfo   = 'G'
 	agwKindMonitorRaw = 'K'
 
-	MsgPacket = 0x20
-	MsgError  = 0x21
-	MsgDCD    = 0x23
+	MsgPacket  = 0x20
+	MsgError   = 0x21
+	MsgDCD     = 0x23
 	MsgMonitor = 0x24
-	MsgLog    = 0x25
+	MsgLog     = 0x25
 )
 
 // ---------------------------------------------------------------------------
@@ -119,8 +120,8 @@ type SMChannelConfig struct {
 
 // SMConfig holds the full configuration for one QtSoundModem instance.
 type SMConfig struct {
-	SampleRate   int               `json:"sample_rate"`
-	DCDThreshold int               `json:"dcd_threshold"`
+	SampleRate   int                `json:"sample_rate"`
+	DCDThreshold int                `json:"dcd_threshold"`
 	Channels     [4]SMChannelConfig `json:"channels"`
 }
 
@@ -284,7 +285,8 @@ func NewSoundModemDecoder(cfg SMConfig) (*SoundModemDecoder, error) {
 }
 
 // Start launches the subprocess and begins goroutines.
-func (d *SoundModemDecoder) Start(audioChan <-chan AudioSample, resultChan chan<- []byte) error {
+// pc is used by kissReadLoop (to read pendingSNR) and agwReadLoop (to signal DCD events).
+func (d *SoundModemDecoder) Start(audioChan <-chan AudioSample, resultChan chan<- []byte, pc *packetChannel) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -360,12 +362,12 @@ func (d *SoundModemDecoder) Start(audioChan <-chan AudioSample, resultChan chan<
 
 	d.wg.Add(4)
 	go d.writeLoop(audioChan)
-	go d.kissReadLoop(resultChan)
+	go d.kissReadLoop(resultChan, pc)
 	go d.waitLoop()
 	go d.stderrReadLoop(stderrPipe, resultChan)
 	if d.agwConn != nil {
 		d.wg.Add(1)
-		go d.agwReadLoop(resultChan)
+		go d.agwReadLoop(resultChan, pc)
 	}
 
 	return nil
@@ -481,7 +483,7 @@ func (d *SoundModemDecoder) writeLoop(audioChan <-chan AudioSample) {
 	}
 }
 
-func (d *SoundModemDecoder) kissReadLoop(resultChan chan<- []byte) {
+func (d *SoundModemDecoder) kissReadLoop(resultChan chan<- []byte, pc *packetChannel) {
 	defer d.wg.Done()
 
 	buf := make([]byte, smKissReadBufSize)
@@ -525,7 +527,8 @@ func (d *SoundModemDecoder) kissReadLoop(resultChan chan<- []byte) {
 						kissCmd := frame[0] & 0x0F
 						if kissCmd == 0 {
 							ax25 := frame[1:]
-							pkt := smEncodePacketFrame(kissPort, ax25)
+							snr := pc.takePendingSNR()
+							pkt := smEncodePacketFrame(kissPort, ax25, snr)
 							select {
 							case resultChan <- pkt:
 							default:
@@ -581,7 +584,7 @@ func (d *SoundModemDecoder) waitLoop() {
 	}
 }
 
-func (d *SoundModemDecoder) agwReadLoop(resultChan chan<- []byte) {
+func (d *SoundModemDecoder) agwReadLoop(resultChan chan<- []byte, pc *packetChannel) {
 	defer d.wg.Done()
 	hdr := make([]byte, smAGWHeaderSize)
 	for {
@@ -666,12 +669,13 @@ func (d *SoundModemDecoder) stderrReadLoop(r io.Reader, resultChan chan<- []byte
 // Wire-protocol frame encoders
 // ---------------------------------------------------------------------------
 
-func smEncodePacketFrame(kissPort byte, ax25 []byte) []byte {
-	buf := make([]byte, 6+len(ax25))
+func smEncodePacketFrame(kissPort byte, ax25 []byte, snr float32) []byte {
+	buf := make([]byte, 10+len(ax25))
 	buf[0] = MsgPacket
 	buf[1] = kissPort
-	binary.BigEndian.PutUint32(buf[2:6], uint32(len(ax25)))
-	copy(buf[6:], ax25)
+	binary.LittleEndian.PutUint32(buf[2:6], math.Float32bits(snr))
+	binary.BigEndian.PutUint32(buf[6:10], uint32(len(ax25)))
+	copy(buf[10:], ax25)
 	return buf
 }
 

@@ -33,20 +33,66 @@ package main
 
 import (
 	"context"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+// ---------------------------------------------------------------------------
+// SNR helpers
+// ---------------------------------------------------------------------------
+
+// snrRingSize is the number of SNR samples kept in the timestamped ring buffer.
+// At ~20 ms per v2 packet, 100 samples ≈ 2 seconds — enough headroom for the
+// 500 ms lookback window used by takePendingSNR.
+const snrRingSize = 100
+
+// snrLookback is the window used when averaging SNR for a decoded frame.
+// The AGW monitor frame fires after full decode, so we look back this far
+// to capture the samples that arrived during the transmission.
+const snrLookback = 500 * time.Millisecond
+
+// snrSample is one timestamped SNR measurement from an UberSDR v2 packet.
+type snrSample struct {
+	t   time.Time
+	snr float32
+}
+
+// ---------------------------------------------------------------------------
+// Frame store — server-side ring buffer of decoded AX.25 frames
+// ---------------------------------------------------------------------------
+
+// frameStoreSize is the maximum number of decoded frames kept per channel.
+const frameStoreSize = 1000
+
+// storedFrame is one decoded AX.25 frame with metadata, ready for JSON.
+type storedFrame struct {
+	ReceivedAt time.Time `json:"received_at"`
+	SmCh       int       `json:"sm_ch"`      // modem sub-channel (0–3)
+	SNR        *float32  `json:"snr"`        // nil when unavailable
+	From       string    `json:"from"`       // source callsign
+	To         string    `json:"to"`         // destination callsign
+	Via        []string  `json:"via"`        // digipeater path
+	FrameType  string    `json:"frame_type"` // "ui", "aprs", "i", etc.
+	Info       string    `json:"info"`       // decoded description
+	InfoRaw    string    `json:"info_raw"`   // raw payload text
+	HexRaw     string    `json:"hex_raw"`    // full AX.25 frame as hex
+}
 
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
@@ -98,10 +144,21 @@ type packetChannel struct {
 	// Audio tap — fan-out raw PCM bytes to preview listeners.
 	tapMu   sync.RWMutex
 	tapSubs map[chan []byte]struct{}
+
+	// SNR tracking — all fields guarded by snrMu.
+	snrMu     sync.Mutex
+	snrRing   [snrRingSize]snrSample // circular buffer of timestamped SNR samples
+	snrHead   int                    // next write position
+	snrFilled int                    // number of valid entries (0..snrRingSize)
+
+	// Frame store — server-side ring buffer of decoded frames for the REST API.
+	frameMu sync.RWMutex
+	frames  []storedFrame // circular ring, len grows to frameStoreSize then wraps
+	frameW  int           // next write index
 }
 
 func newPacketChannel(inst *instance, cfg SMConfig, channelID, mqttTopicPrefix, name string) *packetChannel {
-	return &packetChannel{
+	pc := &packetChannel{
 		inst:            inst,
 		label:           inst.label,
 		channelID:       channelID,
@@ -112,6 +169,303 @@ func newPacketChannel(inst *instance, cfg SMConfig, channelID, mqttTopicPrefix, 
 		name:            name,
 		tapSubs:         make(map[chan []byte]struct{}),
 	}
+	return pc
+}
+
+// pushSNR records a new timestamped SNR sample into the ring buffer.
+func (pc *packetChannel) pushSNR(snr float32) {
+	if math.IsNaN(float64(snr)) {
+		return
+	}
+	pc.snrMu.Lock()
+	defer pc.snrMu.Unlock()
+	pc.snrRing[pc.snrHead] = snrSample{t: time.Now(), snr: snr}
+	pc.snrHead = (pc.snrHead + 1) % snrRingSize
+	if pc.snrFilled < snrRingSize {
+		pc.snrFilled++
+	}
+}
+
+// takePendingSNR returns the linear-domain average of SNR samples received
+// within the last snrLookback window. Returns NaN if no samples are available.
+// The AGW monitor frame fires after full decode, so looking back 500 ms
+// captures the samples that arrived during the transmission.
+func (pc *packetChannel) takePendingSNR() float32 {
+	pc.snrMu.Lock()
+	defer pc.snrMu.Unlock()
+	if pc.snrFilled == 0 {
+		return float32(math.NaN())
+	}
+	cutoff := time.Now().Add(-snrLookback)
+	var sum float64
+	var count int
+	// Iterate from newest to oldest (head-1 backwards)
+	for i := 0; i < pc.snrFilled; i++ {
+		idx := (pc.snrHead - 1 - i + snrRingSize) % snrRingSize
+		s := pc.snrRing[idx]
+		if s.t.Before(cutoff) {
+			break // ring is time-ordered; stop once we're past the window
+		}
+		sum += math.Pow(10, float64(s.snr)/10)
+		count++
+	}
+	if count == 0 {
+		return float32(math.NaN())
+	}
+	return float32(10 * math.Log10(sum/float64(count)))
+}
+
+// ---------------------------------------------------------------------------
+// Frame store methods
+// ---------------------------------------------------------------------------
+
+// ax25CallStr decodes a 7-byte AX.25 address field into a callsign string.
+func ax25CallStr(b []byte) string {
+	if len(b) < 7 {
+		return ""
+	}
+	var call [6]byte
+	n := 0
+	for i := 0; i < 6; i++ {
+		ch := b[i] >> 1
+		if ch != 0x20 && ch != 0x00 {
+			call[n] = ch
+			n++
+		}
+	}
+	ssid := (b[6] >> 1) & 0x0F
+	s := strings.TrimRight(string(call[:n]), " ")
+	if ssid > 0 {
+		s = fmt.Sprintf("%s-%d", s, ssid)
+	}
+	return s
+}
+
+// parseAX25Addrs extracts from, to, and digipeater callsigns from a raw AX.25
+// frame. Returns empty strings on malformed input.
+func parseAX25Addrs(ax25 []byte) (from, to string, via []string) {
+	if len(ax25) < 14 {
+		return "", "", nil
+	}
+	to = ax25CallStr(ax25[0:7])
+	from = ax25CallStr(ax25[7:14])
+	offset := 14
+	// H-bit (LSB of SSID byte) set on src means no digipeaters follow
+	for offset+7 <= len(ax25) {
+		digi := ax25CallStr(ax25[offset : offset+7])
+		hBit := (ax25[offset+6] & 0x80) != 0
+		actioned := hBit
+		if actioned {
+			digi += "*"
+		}
+		via = append(via, digi)
+		isLast := (ax25[offset+6] & 0x01) != 0
+		offset += 7
+		if isLast {
+			break
+		}
+	}
+	return from, to, via
+}
+
+// storeFrame parses a MsgPacket wire frame and appends it to the ring buffer.
+// frame layout: [MsgPacket][kissPort][snr:4 LE float32][frameLen:4 BE uint32][ax25...]
+func (pc *packetChannel) storeFrame(frame []byte, receivedAt time.Time) {
+	if len(frame) < 10 || frame[0] != MsgPacket {
+		return
+	}
+	smCh := int(frame[1])
+	snrBits := binary.LittleEndian.Uint32(frame[2:6])
+	snrVal := math.Float32frombits(snrBits)
+	frameLen := binary.BigEndian.Uint32(frame[6:10])
+	if uint32(len(frame)) < 10+frameLen {
+		return
+	}
+	ax25 := frame[10 : 10+frameLen]
+
+	from, to, via := parseAX25Addrs(ax25)
+	if via == nil {
+		via = []string{}
+	}
+
+	var snrPtr *float32
+	if !math.IsNaN(float64(snrVal)) {
+		v := snrVal
+		snrPtr = &v
+	}
+
+	sf := storedFrame{
+		ReceivedAt: receivedAt,
+		SmCh:       smCh,
+		SNR:        snrPtr,
+		From:       from,
+		To:         to,
+		Via:        via,
+		HexRaw:     hex.EncodeToString(ax25),
+	}
+
+	// Minimal frame-type detection from control byte (after address field).
+	// Full decoding happens in the browser; here we just need enough for filtering.
+	addrEnd := 14
+	for addrEnd+7 <= len(ax25) {
+		if (ax25[addrEnd-1] & 0x01) != 0 {
+			break
+		}
+		addrEnd += 7
+	}
+	if addrEnd < len(ax25) {
+		ctrl := ax25[addrEnd]
+		ctrlNoPF := ctrl & ^byte(0x10)
+		switch {
+		case ctrl&0x01 == 0:
+			sf.FrameType = "i"
+		case ctrl&0x03 == 0x01:
+			sf.FrameType = "s"
+		case ctrlNoPF == 0x03: // UI
+			sf.FrameType = "ui"
+			// Check PID for APRS (0xF0 = no layer 3)
+			pidOff := addrEnd + 1
+			if pidOff < len(ax25) && ax25[pidOff] == 0xF0 {
+				sf.FrameType = "aprs"
+				infoOff := pidOff + 1
+				if infoOff < len(ax25) {
+					sf.InfoRaw = strings.Map(func(r rune) rune {
+						if r < 0x20 && r != '\r' && r != '\n' {
+							return -1
+						}
+						return r
+					}, string(ax25[infoOff:]))
+					sf.Info = sf.InfoRaw
+				}
+			}
+		default:
+			sf.FrameType = "u"
+		}
+	}
+
+	pc.frameMu.Lock()
+	if len(pc.frames) < frameStoreSize {
+		pc.frames = append(pc.frames, sf)
+	} else {
+		pc.frames[pc.frameW] = sf
+		pc.frameW = (pc.frameW + 1) % frameStoreSize
+	}
+	pc.frameMu.Unlock()
+}
+
+// queryFrames returns stored frames matching the given filters.
+// smCh < 0 means all sub-channels. limit <= 0 means return all matching.
+// from/to are case-insensitive prefix matches (empty = no filter).
+// fromExact/toExact are case-insensitive exact matches (empty = no filter).
+// search is a case-insensitive substring match against from, to, via, info, infoRaw (empty = no filter).
+// Results are returned newest-first.
+func (pc *packetChannel) queryFrames(smCh, limit int, from, to, fromExact, toExact, search string) []storedFrame {
+	pc.frameMu.RLock()
+	n := len(pc.frames)
+	// Build ordered slice: oldest→newest
+	ordered := make([]storedFrame, n)
+	if n < frameStoreSize || pc.frameW == 0 {
+		copy(ordered, pc.frames)
+	} else {
+		// Ring has wrapped: frameW points to oldest entry
+		copy(ordered, pc.frames[pc.frameW:])
+		copy(ordered[n-pc.frameW:], pc.frames[:pc.frameW])
+	}
+	pc.frameMu.RUnlock()
+
+	fromLo := strings.ToLower(from)
+	toLo := strings.ToLower(to)
+	fromExactLo := strings.ToLower(fromExact)
+	toExactLo := strings.ToLower(toExact)
+	searchLo := strings.ToLower(search)
+
+	// Filter (newest-first traversal)
+	var result []storedFrame
+	for i := n - 1; i >= 0; i-- {
+		f := ordered[i]
+		if smCh >= 0 && f.SmCh != smCh {
+			continue
+		}
+		if fromLo != "" && !strings.HasPrefix(strings.ToLower(f.From), fromLo) {
+			continue
+		}
+		if toLo != "" && !strings.HasPrefix(strings.ToLower(f.To), toLo) {
+			continue
+		}
+		if fromExactLo != "" && strings.ToLower(f.From) != fromExactLo {
+			continue
+		}
+		if toExactLo != "" && strings.ToLower(f.To) != toExactLo {
+			continue
+		}
+		if searchLo != "" {
+			haystack := strings.ToLower(f.From + " " + f.To + " " + strings.Join(f.Via, " ") + " " + f.Info + " " + f.InfoRaw)
+			if !strings.Contains(haystack, searchLo) {
+				continue
+			}
+		}
+		result = append(result, f)
+		if limit > 0 && len(result) >= limit {
+			break
+		}
+	}
+	return result
+}
+
+// senderInfo summarises one unique source callsign seen in the frame store.
+type senderInfo struct {
+	Callsign     string    `json:"callsign"`
+	FrameCount   int       `json:"frame_count"`
+	LastSeen     time.Time `json:"last_seen"`
+	SNRAvailable bool      `json:"snr_available"` // true if at least one frame has SNR data
+}
+
+// senders returns a deduplicated list of source callsigns seen in the frame
+// store, sorted by last-seen descending (most recent first).
+func (pc *packetChannel) senders() []senderInfo {
+	pc.frameMu.RLock()
+	frames := make([]storedFrame, len(pc.frames))
+	copy(frames, pc.frames)
+	pc.frameMu.RUnlock()
+
+	type agg struct {
+		count    int
+		lastSeen time.Time
+		hasSNR   bool
+	}
+	m := make(map[string]*agg)
+	for _, f := range frames {
+		if f.From == "" {
+			continue
+		}
+		a := m[f.From]
+		if a == nil {
+			a = &agg{}
+			m[f.From] = a
+		}
+		a.count++
+		if f.ReceivedAt.After(a.lastSeen) {
+			a.lastSeen = f.ReceivedAt
+		}
+		if f.SNR != nil {
+			a.hasSNR = true
+		}
+	}
+
+	result := make([]senderInfo, 0, len(m))
+	for call, a := range m {
+		result = append(result, senderInfo{
+			Callsign:     call,
+			FrameCount:   a.count,
+			LastSeen:     a.lastSeen,
+			SNRAvailable: a.hasSNR,
+		})
+	}
+	// Sort newest last-seen first
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].LastSeen.After(result[j].LastSeen)
+	})
+	return result
 }
 
 // tapSubscribe registers a channel to receive copies of raw PCM bytes.
@@ -159,7 +513,7 @@ func (pc *packetChannel) start(ctx context.Context, hub *sseHub, mq *mqttClient,
 		if err != nil {
 			return nil, err
 		}
-		if err := d.Start(pc.audioChan, pc.resultChan); err != nil {
+		if err := d.Start(pc.audioChan, pc.resultChan, pc); err != nil {
 			return nil, err
 		}
 		pc.mu.Lock()
@@ -187,32 +541,50 @@ func (pc *packetChannel) start(ctx context.Context, hub *sseHub, mq *mqttClient,
 					return
 				}
 				hub.broadcast(pc.channelID, frame)
-				// Publish a KISS-framed AX.25 packet to MQTT.
+				// Store decoded AX.25 frames in the server-side ring buffer.
+				if len(frame) >= 10 && frame[0] == MsgPacket {
+					pc.storeFrame(frame, time.Now())
+				}
+				// Publish decoded AX.25 frames to MQTT as JSON.
 				// Only MsgPacket frames carry actual decoded AX.25 data;
 				// MsgDCD / MsgMonitor / MsgLog are UI-only and must not be
 				// forwarded to MQTT.
-				// Internal wire format: [MsgPacket][kissPort][len 4B][ax25...]
-				// KISS frame format:    0xC0 (port<<4)|0x00 <ax25> 0xC0
-				if mq != nil && len(frame) >= 6 && frame[0] == MsgPacket {
+				// Internal wire format: [MsgPacket][kissPort][snr float32 LE][frameLen uint32 LE][ax25...]
+				if mq != nil && len(frame) >= 10 && frame[0] == MsgPacket {
 					pc.mu.Lock()
-					suffix := pc.mqttTopicPrefix // per-channel suffix only (e.g. "7049450_usb")
+					suffix := pc.mqttTopicPrefix
+					chLabel := pc.label
 					pc.mu.Unlock()
-					// Build the full topic: <globalPrefix>/<suffix>.
-					// suffix defaults to the channel label when empty.
-					// If no global prefix is configured, MQTT publishing is skipped.
 					if defaultPrefix != "" {
 						if suffix == "" {
-							suffix = pc.label
+							suffix = chLabel
 						}
 						topic := defaultPrefix + "/" + suffix
 						kissPort := frame[1]
-						ax25 := frame[6:]
-						kissFrame := make([]byte, 3+len(ax25))
-						kissFrame[0] = 0xC0
-						kissFrame[1] = (kissPort << 4) | 0x00 // data frame, port N
-						copy(kissFrame[2:], ax25)
-						kissFrame[2+len(ax25)] = 0xC0
-						mq.Publish(topic, kissFrame)
+						snrBits := binary.LittleEndian.Uint32(frame[2:6])
+						snrVal := math.Float32frombits(snrBits)
+						ax25 := frame[10:]
+
+						type mqttMsg struct {
+							Channel    string   `json:"channel"`
+							ModemCh    int      `json:"modem_ch"`
+							SNR        *float64 `json:"snr"`
+							ReceivedAt string   `json:"received_at"`
+							Frame      []byte   `json:"frame"` // base64 by encoding/json
+						}
+						msg := mqttMsg{
+							Channel:    chLabel,
+							ModemCh:    int(kissPort),
+							ReceivedAt: time.Now().UTC().Format(time.RFC3339Nano),
+							Frame:      ax25,
+						}
+						if !math.IsNaN(float64(snrVal)) {
+							v := float64(snrVal)
+							msg.SNR = &v
+						}
+						if payload, err := json.Marshal(msg); err == nil {
+							mq.Publish(topic, payload)
+						}
 					}
 				}
 			case crashErr := <-decoder.CrashChan():
@@ -274,6 +646,21 @@ func (pc *packetChannel) start(ctx context.Context, hub *sseHub, mq *mqttClient,
 		}
 	}()
 
+	// Drain SNRCh from the UberSDR instance and push samples into the ring buffer.
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case snr, ok := <-pc.inst.SNRCh:
+				if !ok {
+					return
+				}
+				pc.pushSNR(snr)
+			}
+		}
+	}()
+
 	// Start the UberSDR connection loop.
 	go pc.inst.start(ctx)
 
@@ -307,7 +694,7 @@ func (pc *packetChannel) restartModem() {
 		log.Printf("[%s] restartModem: create: %v", pc.label, err)
 		return
 	}
-	if err := d.Start(pc.audioChan, pc.resultChan); err != nil {
+	if err := d.Start(pc.audioChan, pc.resultChan, pc); err != nil {
 		log.Printf("[%s] restartModem: start: %v", pc.label, err)
 		return
 	}

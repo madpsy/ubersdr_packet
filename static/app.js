@@ -51,6 +51,28 @@ const RX_SHIFT = [
   500,   // 15 ARDOP
 ];
 
+// Approximate TX duration in milliseconds for a typical AX.25 UI frame (~70 bytes = 560 bits)
+// at each modem index. Formula: ceil(560 / baud_rate * 1000) + ~100ms preamble.
+// Used to estimate the height of the callsign marker bar on the waterfall.
+const MODEM_TX_MS = [
+  2000,  // 0  AFSK 300bd    560/300  ≈ 1.9s
+   570,  // 1  AFSK 1200bd   560/1200 ≈ 0.47s
+  1030,  // 2  AFSK 600bd    560/600  ≈ 0.93s
+   330,  // 3  AFSK 2400bd   560/2400 ≈ 0.23s
+   570,  // 4  BPSK 1200bd
+  1030,  // 5  BPSK 600bd
+  2000,  // 6  BPSK 300bd
+   330,  // 7  BPSK 2400bd
+   220,  // 8  QPSK 4800bd   560/4800 ≈ 0.12s
+   260,  // 9  QPSK 3600bd   560/3600 ≈ 0.16s
+   330,  // 10 QPSK 2400bd
+   570,  // 11 BPSK FEC
+   330,  // 12 DW QPSK V26A
+   220,  // 13 DW 8PSK V27
+   330,  // 14 DW QPSK V26B
+   800,  // 15 ARDOP (variable, use conservative estimate)
+];
+
 const WF_CH_COLORS = ['#29B6F6', '#66BB6A', '#CE93D8', '#FFA726'];
 const WF_MAX_FREQ  = 3300;  // Hz — display range matches extension (_wfMaxFreq = 3300)
 const WF_HEIGHT    = 120;
@@ -167,6 +189,259 @@ function showLoginModal() {
 function hideLoginModal() {
   document.getElementById('login-modal').classList.add('hidden');
 }
+
+// ---------------------------------------------------------------------------
+// API Documentation modal
+// ---------------------------------------------------------------------------
+function showApiDocs() {
+  const modal = document.getElementById('api-docs-modal');
+  const body  = document.getElementById('apidocs-body');
+
+  // Derive the base URL from the current page location so curl examples
+  // always reflect the actual deployment (e.g. behind a reverse proxy).
+  const base = window.location.origin + (BASE || '');
+
+  function section(title) {
+    return `<h3 class="apidocs-section">${title}</h3>`;
+  }
+  function endpoint(method, path, desc, curlLines, notes) {
+    const curl = curlLines.map(l => `<div class="apidocs-curl-line">${escHtml(l)}</div>`).join('');
+    const noteHtml = notes ? `<p class="apidocs-note">${notes}</p>` : '';
+    return `
+      <div class="apidocs-endpoint">
+        <div class="apidocs-sig">
+          <span class="apidocs-method apidocs-method-${method.toLowerCase()}">${method}</span>
+          <code class="apidocs-path">${escHtml(path)}</code>
+        </div>
+        <p class="apidocs-desc">${desc}</p>
+        ${noteHtml}
+        <pre class="apidocs-pre">${curl}</pre>
+      </div>`;
+  }
+  function rawBlock(lines) {
+    return `<div class="apidocs-endpoint"><pre class="apidocs-pre">${
+      lines.map(l => `<div class="apidocs-curl-line">${escHtml(l)}</div>`).join('')
+    }</pre></div>`;
+  }
+  function escHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  body.innerHTML = [
+    // ── Channels ────────────────────────────────────────────────────────────
+    section('Channels'),
+    endpoint('GET', '/api/channels',
+      'List all configured channels with modem config, connection status, and senders seen.',
+      [`curl '${base}/api/channels'`]),
+    endpoint('GET', '/api/channels/{label}',
+      'Get a single channel by its label.',
+      [`curl '${base}/api/channels/7049450_usb'`]),
+    endpoint('POST', '/api/channels',
+      'Add a new channel. Requires authentication when a UI password is set.',
+      [
+        `curl -X POST '${base}/api/channels' \\`,
+        `  -H 'Content-Type: application/json' \\`,
+        `  -d '{"freq_hz":7049450,"mode":"usb","name":"20m Packet"}'`,
+      ]),
+    endpoint('PATCH', '/api/channels/{label}',
+      'Update an existing channel (name, modem config, MQTT topic prefix, etc.).',
+      [
+        `curl -X PATCH '${base}/api/channels/7049450_usb' \\`,
+        `  -H 'Content-Type: application/json' \\`,
+        `  -d '{"name":"HF Packet"}'`,
+      ]),
+    endpoint('DELETE', '/api/channels/{label}',
+      'Remove a channel.',
+      [`curl -X DELETE '${base}/api/channels/7049450_usb'`]),
+
+    // ── Status ───────────────────────────────────────────────────────────────
+    section('Status'),
+    endpoint('GET', '/api/status',
+      'Overall system status: all channels with connection state, modem config, and current time.',
+      [`curl '${base}/api/status'`]),
+
+    // ── Frames ───────────────────────────────────────────────────────────────
+    section('Frames'),
+    endpoint('GET', '/api/frames',
+      'Query decoded AX.25 frames from the server-side ring buffer (up to 1000). ' +
+      'Use <code>channel=*</code> to aggregate across all channels.',
+      [
+        `# Last 20 frames on a channel`,
+        `curl '${base}/api/frames?channel=7049450_usb&limit=20'`,
+        ``,
+        `# All channels, newest 50`,
+        `curl '${base}/api/frames?channel=*&limit=50'`,
+        ``,
+        `# Exact sender callsign`,
+        `curl '${base}/api/frames?channel=7049450_usb&from_exact=G0ABC-9&limit=100'`,
+        ``,
+        `# Exact destination callsign`,
+        `curl '${base}/api/frames?channel=7049450_usb&to_exact=APRS&limit=50'`,
+        ``,
+        `# Prefix match on sender`,
+        `curl '${base}/api/frames?channel=7049450_usb&from=G0ABC&limit=50'`,
+        ``,
+        `# Full-text search (from/to/via/info)`,
+        `curl '${base}/api/frames?channel=7049450_usb&search=BEACON&limit=100'`,
+        ``,
+        `# Specific modem sub-channel (0–3)`,
+        `curl '${base}/api/frames?channel=7049450_usb&sm_ch=0&limit=50'`,
+        ``,
+        `# Time range (RFC3339)`,
+        `curl '${base}/api/frames?channel=7049450_usb&from=2024-01-01T00:00:00Z&to=2024-01-02T00:00:00Z'`,
+      ],
+      'Response: JSON array of frame objects. Each object: ' +
+      '<code>channel</code>, <code>sm_ch</code>, <code>from</code>, <code>to</code>, ' +
+      '<code>via</code> (array), <code>info</code> (string), <code>snr</code> (dB float or null), ' +
+      '<code>received_at</code> (RFC3339Nano).'),
+
+    // ── Live Feed (SSE) ──────────────────────────────────────────────────────
+    section('Live Feed — SSE'),
+    `<div class="apidocs-endpoint">
+      <p class="apidocs-desc">
+        Server-Sent Events stream delivering all decoded frames and modem events in real time.
+        Each SSE <code>data:</code> line is a JSON envelope:
+      </p>
+      <pre class="apidocs-pre">` +
+      [
+        `curl -N '${base}/api/events'`,
+        ``,
+        `# Filter to one channel (by channel_id UUID):`,
+        `curl -N '${base}/api/events?channel_id=<uuid>'`,
+        ``,
+        `# Each event is a JSON object:`,
+        `{`,
+        `  "channel_id":  "<uuid>",`,
+        `  "received_at": 1704067200000,   // Unix milliseconds`,
+        `  "data":        "<base64>"        // binary wire frame (see below)`,
+        `}`,
+      ].map(l => `<div class="apidocs-curl-line">${escHtml(l)}</div>`).join('') +
+      `</pre>
+      <p class="apidocs-note">A heartbeat comment (<code>: heartbeat</code>) is sent every 15 s to keep the connection alive.</p>
+    </div>`,
+
+    // ── Binary Wire Protocol ─────────────────────────────────────────────────
+    section('Binary Wire Protocol (SSE data field)'),
+    `<div class="apidocs-endpoint">
+      <p class="apidocs-desc">
+        The <code>data</code> field in each SSE event is a base64-encoded binary frame.
+        The first byte is the message type. All multi-byte integers are big-endian unless noted.
+      </p>` +
+      rawBlock([
+        `┌─ 0x20  MsgPacket — decoded AX.25 frame ──────────────────────────────┐`,
+        `│ [0]    0x20  type byte                                                │`,
+        `│ [1]    u8    KISS port / modem sub-channel (0–3)                      │`,
+        `│ [2..5] f32LE SNR in dB (IEEE 754 little-endian; NaN = unavailable)   │`,
+        `│ [6..9] u32BE AX.25 payload length                                    │`,
+        `│ [10..] bytes raw AX.25 frame                                         │`,
+        `└──────────────────────────────────────────────────────────────────────┘`,
+        ``,
+        `┌─ 0x21  MsgError — modem error string ────────────────────────────────┐`,
+        `│ [0]    0x21  type byte                                                │`,
+        `│ [1..4] u32BE message length                                          │`,
+        `│ [5..]  UTF-8 error message                                           │`,
+        `└──────────────────────────────────────────────────────────────────────┘`,
+        ``,
+        `┌─ 0x23  MsgDCD — carrier detect signal ───────────────────────────────┐`,
+        `│ [0]    0x23  type byte                                                │`,
+        `│ [1]    u8    modem sub-channel (0–3)                                  │`,
+        `│ [2]    u8    0x01 = DCD on, 0x00 = DCD off                           │`,
+        `└──────────────────────────────────────────────────────────────────────┘`,
+        ``,
+        `┌─ 0x24  MsgMonitor — raw monitor text (TNC monitor port) ─────────────┐`,
+        `│ [0]    0x24  type byte                                                │`,
+        `│ [1]    u8    modem sub-channel (0–3)                                  │`,
+        `│ [2]    u8    0x01 = TX frame, 0x00 = RX frame                        │`,
+        `│ [3..6] u32BE text length                                             │`,
+        `│ [7..]  UTF-8 decoded frame text                                      │`,
+        `└──────────────────────────────────────────────────────────────────────┘`,
+        ``,
+        `┌─ 0x25  MsgLog — modem log line ──────────────────────────────────────┐`,
+        `│ [0]    0x25  type byte                                                │`,
+        `│ [1..4] u32BE message length                                          │`,
+        `│ [5..]  UTF-8 log line                                                │`,
+        `└──────────────────────────────────────────────────────────────────────┘`,
+      ]) +
+    `</div>`,
+
+    // ── Audio Streaming ──────────────────────────────────────────────────────
+    section('Audio Streaming'),
+    endpoint('GET', '/api/audio/{label}',
+      'Streaming WAV audio preview of the demodulated baseband audio being fed into the modem. ' +
+      '12 kHz mono 16-bit PCM. The WAV header uses a max-size data chunk so browsers treat it as a live stream.',
+      [
+        `# Play with ffplay:`,
+        `ffplay '${base}/api/audio/7049450_usb'`,
+        ``,
+        `# Save to file (Ctrl-C to stop):`,
+        `curl '${base}/api/audio/7049450_usb' > recording.wav`,
+        ``,
+        `# Use in an HTML audio element:`,
+        `# <audio src="${base}/api/audio/7049450_usb" controls autoplay></audio>`,
+      ],
+      'Format: WAV, 12000 Hz, 1 channel, 16-bit signed little-endian PCM. ' +
+      'Content-Type: <code>audio/wav</code>. Streams indefinitely until the client disconnects.'),
+
+    // ── MQTT ─────────────────────────────────────────────────────────────────
+    section('MQTT'),
+    `<div class="apidocs-endpoint">
+      <p class="apidocs-desc">
+        When an MQTT broker is configured, every decoded AX.25 frame is published as JSON to
+        <code>&lt;prefix&gt;/&lt;channel_label&gt;</code> (default prefix: <code>ubersdr</code>).
+      </p>` +
+      rawBlock([
+        `# Subscribe to all frames:`,
+        `mosquitto_sub -h broker.example.com -t 'ubersdr/#' -v`,
+        ``,
+        `# Example message on topic  ubersdr/7049450_usb :`,
+        `{`,
+        `  "channel":     "7049450_usb",`,
+        `  "modem_ch":    0,`,
+        `  "snr":         42.3,`,
+        `  "received_at": "2024-01-01T12:00:00.000000000Z",`,
+        `  "frame":       "<base64-encoded raw AX.25 bytes>"`,
+        `}`,
+        ``,
+        `# snr is null when SNR data is unavailable for the channel.`,
+        `# frame is the raw AX.25 bytes, base64-encoded (RFC 4648).`,
+      ]) +
+      `<p class="apidocs-note">
+        Configure via env vars: <code>MQTT_BROKER</code> (e.g. <code>tcp://host:1883</code>),
+        <code>MQTT_USER</code>, <code>MQTT_PASS</code>, <code>MQTT_TOPIC_PREFIX</code>,
+        <code>MQTT_TLS_SKIP_VERIFY</code>. TLS is enabled automatically for <code>ssl://</code>
+        or <code>tls://</code> broker URLs.
+      </p>
+    </div>`,
+
+    // ── Authentication ───────────────────────────────────────────────────────
+    section('Authentication'),
+    endpoint('POST', '/api/auth/login',
+      'Obtain a session cookie. Required for write operations (POST/PATCH/DELETE) when <code>UI_PASSWORD</code> is set.',
+      [
+        `curl -c cookies.txt -X POST '${base}/api/auth/login' \\`,
+        `  -H 'Content-Type: application/json' \\`,
+        `  -d '{"password":"your-password"}'`,
+      ]),
+    endpoint('POST', '/api/auth/logout',
+      'Invalidate the current session cookie.',
+      [`curl -b cookies.txt -X POST '${base}/api/auth/logout'`]),
+
+  ].join('\n');
+
+  modal.classList.remove('hidden');
+}
+
+function hideApiDocs() {
+  document.getElementById('api-docs-modal').classList.add('hidden');
+}
+
+// Close API docs modal on backdrop click
+document.addEventListener('click', e => {
+  const modal = document.getElementById('api-docs-modal');
+  if (modal && !modal.classList.contains('hidden') && e.target === modal) {
+    hideApiDocs();
+  }
+});
 
 function doLogin() {
   const pw = document.getElementById('login-password').value;
@@ -528,7 +803,9 @@ function drawWaterfallHeader(hdrCtx, channelFreqs) {
   hdrCtx.textAlign = 'center';
 }
 
-function drawWaterfallOverlay(ovlCtx, channelFreqs, mouseX) {
+// txEvents: array of { callsign, smCh, startLine, durationLines }
+// currentLine: total lines rendered so far (used to compute row position)
+function drawWaterfallOverlay(ovlCtx, channelFreqs, mouseX, txEvents, currentLine) {
   const w = ovlCtx.canvas.width;
   const h = ovlCtx.canvas.height;
   ovlCtx.clearRect(0, 0, w, h);
@@ -572,6 +849,73 @@ function drawWaterfallOverlay(ovlCtx, channelFreqs, mouseX) {
     ovlCtx.fillText(CH_NAMES[i], xCtr, 3);
     ovlCtx.restore();
   });
+
+  // ── TX callsign markers ──────────────────────────────────────────────────
+  // Each event was recorded at startLine; it scrolls down as currentLine grows.
+  if (txEvents && txEvents.length && currentLine != null) {
+    txEvents.forEach(ev => {
+      // startLine is set to (wfLineCount - durationLines) at decode time, so the
+      // bar spans from the start of the transmission (older = larger Y) to the
+      // end (decode moment = smaller Y, closer to top of waterfall).
+      const rowsAgo   = currentLine - ev.startLine;  // rows since TX started (= durationLines at decode)
+      const yBot      = rowsAgo;                      // TX start = older = lower on screen
+      const yTop      = rowsAgo - ev.durationLines;   // TX end   = newer = higher on screen
+      if (yBot < 0 || yTop > h) return;              // off-screen
+
+      const chIdx = ev.smCh;
+      const chCfg = channelFreqs[chIdx];
+      if (!chCfg || !chCfg.enabled || chCfg.freq <= 0) return;
+
+      const shift = (RX_SHIFT[chCfg.modem] ?? 1000) / 2;
+      const xLo   = Math.round(((chCfg.freq - shift) / WF_MAX_FREQ) * w);
+      const xHi   = Math.round(((chCfg.freq + shift) / WF_MAX_FREQ) * w);
+      const color = WF_CH_COLORS[chIdx] || '#fff';
+
+      const y1 = Math.max(0, yTop);
+      const y2 = Math.min(h, yBot);
+      const barH = y2 - y1;
+      if (barH <= 0) return;
+
+      // Semi-transparent fill over the channel bandwidth
+      ovlCtx.save();
+      ovlCtx.fillStyle = color + '30';
+      ovlCtx.fillRect(xLo, y1, xHi - xLo, barH);
+
+      // Left/right border lines
+      ovlCtx.strokeStyle = color + 'bb';
+      ovlCtx.lineWidth = 1.5;
+      ovlCtx.setLineDash([]);
+      ovlCtx.beginPath();
+      ovlCtx.moveTo(xLo, y1); ovlCtx.lineTo(xLo, y2);
+      ovlCtx.moveTo(xHi, y1); ovlCtx.lineTo(xHi, y2);
+      ovlCtx.stroke();
+
+      // Top edge line (end of transmission = decode moment, newest edge of bar)
+      if (yTop >= 0 && yTop <= h) {
+        ovlCtx.strokeStyle = color;
+        ovlCtx.lineWidth = 1.5;
+        ovlCtx.beginPath();
+        ovlCtx.moveTo(xLo, yTop); ovlCtx.lineTo(xHi, yTop);
+        ovlCtx.stroke();
+      }
+
+      // Callsign label — pin to top of bar (or top of canvas if scrolled off)
+      const labelY = Math.max(y1 + 2, 2);
+      if (labelY < h - 4) {
+        ovlCtx.font         = 'bold 10px monospace';
+        ovlCtx.textAlign    = 'left';
+        ovlCtx.textBaseline = 'top';
+        const label = ev.callsign;
+        const tw    = ovlCtx.measureText(label).width;
+        const bx    = Math.min(xLo + 2, w - tw - 6);
+        ovlCtx.fillStyle = 'rgba(0,0,0,0.75)';
+        ovlCtx.fillRect(bx - 1, labelY - 1, tw + 4, 12);
+        ovlCtx.fillStyle = color;
+        ovlCtx.fillText(label, bx + 1, labelY);
+      }
+      ovlCtx.restore();
+    });
+  }
 
   if (mouseX !== null) {
     const audioHz = Math.round((mouseX / w) * WF_MAX_FREQ);
@@ -636,7 +980,7 @@ function attachWaterfall(wfWrap, label, channelFreqs) {
     hdrCtx.fillStyle = '#000';
     hdrCtx.fillRect(0, 0, w, WF_HEIGHT);
     drawWaterfallHeader(hdrCtx, channelFreqs);
-    drawWaterfallOverlay(ovlCtx, channelFreqs, null);
+    drawWaterfallOverlay(ovlCtx, channelFreqs, null, txEvents, wfLineCount);
   }
 
   const hdrCtx = hdrCanvas.getContext('2d');
@@ -647,11 +991,11 @@ function attachWaterfall(wfWrap, label, channelFreqs) {
   ovlCanvas.addEventListener('mousemove', e => {
     const rect = ovlCanvas.getBoundingClientRect();
     mouseX = (e.clientX - rect.left) * (ovlCanvas.width / rect.width);
-    drawWaterfallOverlay(ovlCtx, channelFreqs, mouseX);
+    drawWaterfallOverlay(ovlCtx, channelFreqs, mouseX, txEvents, wfLineCount);
   });
   ovlCanvas.addEventListener('mouseleave', () => {
     mouseX = null;
-    drawWaterfallOverlay(ovlCtx, channelFreqs, null);
+    drawWaterfallOverlay(ovlCtx, channelFreqs, null, txEvents, wfLineCount);
   });
 
   // Delay resize until element is in DOM
@@ -659,10 +1003,20 @@ function attachWaterfall(wfWrap, label, channelFreqs) {
   const ro = new ResizeObserver(() => resize());
   ro.observe(wfBody);
 
+  // TX event ring — each entry: { callsign, smCh, startMs, durationMs }
+  // startMs is performance.now() at the moment the frame was decoded.
+  const TX_RING_MAX = 40;
+  const txEvents = [];
+
   // Web Audio setup
   let audioCtx = null, analyser = null, gainNode = null, source = null, fftBuf = null;
   let audioEl = null;
   let wfLastLineAt = 0, wfRafId = null, stopped = false;
+  // wfLineCount: total lines rendered since start — used to convert time → row position
+  let wfLineCount = 0;
+  // Map from performance.now() → wfLineCount at that moment (sampled each rendered line)
+  // We store the last rendered line's timestamp so we can interpolate.
+  let wfLastLineMs = 0;
 
   function renderLine() {
     if (stopped || !analyser) return;
@@ -676,6 +1030,8 @@ function attachWaterfall(wfWrap, label, channelFreqs) {
     const now = performance.now();
     if (now - wfLastLineAt < WF_LINE_MS) return;
     wfLastLineAt = now;
+    wfLastLineMs = now;
+    wfLineCount++;
 
     const w = wfCtx.canvas.width;
     const h = wfCtx.canvas.height;
@@ -698,6 +1054,9 @@ function attachWaterfall(wfWrap, label, channelFreqs) {
       d[px * 4 + 3] = 255;
     }
     wfCtx.putImageData(imgData, 0, 0);
+
+    // Redraw overlay to scroll tx markers
+    drawWaterfallOverlay(ovlCtx, channelFreqs, mouseX, txEvents, wfLineCount);
   }
 
   async function startAudio() {
@@ -776,7 +1135,29 @@ function attachWaterfall(wfWrap, label, channelFreqs) {
     redrawHeader(newChannelFreqs) {
       channelFreqs = newChannelFreqs;
       drawWaterfallHeader(hdrCtx, channelFreqs);
-      drawWaterfallOverlay(ovlCtx, channelFreqs, mouseX);
+      drawWaterfallOverlay(ovlCtx, channelFreqs, mouseX, txEvents, wfLineCount);
+    },
+    // Called by renderChannelCard when a decoded frame arrives.
+    // entry: { from, smCh } — the decoded frame entry.
+    // modemIdx: the modem type index for this sub-channel (used to look up TX duration).
+    notifyFrame(entry, modemIdx) {
+      if (!entry.from) return;
+      const durationMs    = MODEM_TX_MS[modemIdx] ?? 570;
+      const durationLines = Math.max(2, Math.round(durationMs / WF_LINE_MS));
+      // The decode fires AFTER the full frame has been received, so the
+      // transmission already happened durationLines rows ago. Place the bar
+      // so its bottom edge aligns with the current waterfall position (decode
+      // moment) and its top edge is durationLines rows above (already scrolled).
+      txEvents.push({
+        callsign:      entry.from,
+        smCh:          entry.smCh,
+        startLine:     wfLineCount - durationLines,
+        durationLines,
+      });
+      // Keep ring bounded
+      if (txEvents.length > TX_RING_MAX) txEvents.shift();
+      // Immediately redraw overlay so the marker appears at the top
+      drawWaterfallOverlay(ovlCtx, channelFreqs, mouseX, txEvents, wfLineCount);
     },
   };
 }
@@ -872,6 +1253,15 @@ function renderChannelCard(ch) {
   }
 
   const actions = el('div', 'channel-actions');
+
+  const btnSNR = el('button', 'btn btn-secondary btn-sm btn-snr-history', '📈 SNR');
+  btnSNR.title = 'View SNR history for senders on this channel';
+  btnSNR.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (window.SNRHistory) window.SNRHistory.open(ch.label);
+  });
+  actions.appendChild(btnSNR);
+
   const btnDel = el('button', 'btn btn-danger btn-sm', 'Remove');
   btnDel.addEventListener('click', async (e) => {
     e.stopPropagation();
@@ -1502,6 +1892,17 @@ function renderChannelCard(ch) {
       if (last < infoText.length) payloadEl.appendChild(document.createTextNode(infoText.slice(last)));
     }
     row.appendChild(payloadEl);
+
+    // SNR badge — only shown when a valid SNR value was attached to the frame
+    if (!isNaN(entry.snr)) {
+      const snrBadge = el('span', 'frame-snr-badge', entry.snr.toFixed(1) + ' dB');
+      snrBadge.title = 'Signal-to-noise ratio (DCD-gated average)';
+      snrBadge.classList.add(
+        entry.snr > 60 ? 'snr-good' : entry.snr > 40 ? 'snr-ok' : 'snr-poor'
+      );
+      row.appendChild(snrBadge);
+    }
+
     return row;
   }
 
@@ -1510,10 +1911,12 @@ function renderChannelCard(ch) {
     const type = data[0];
 
     if (type === MSG_PACKET) {
-      if (data.length < 6) return;
+      if (data.length < 10) return;
       const smCh = data[1];
-      const frameLen = (data[2] << 24) | (data[3] << 16) | (data[4] << 8) | data[5];
-      const ax25 = data.slice(6, 6 + frameLen);
+      const view = new DataView(data.buffer, data.byteOffset);
+      const snr = view.getFloat32(2, true);           // LE float32 at [2:6]
+      const frameLen = view.getUint32(6, false);       // BE uint32 at [6:10]
+      const ax25 = data.slice(10, 10 + frameLen);
       let parsed = null;
       try { if (window.AX25Decode) parsed = window.AX25Decode.parse(ax25); } catch (_) {}
 
@@ -1526,6 +1929,7 @@ function renderChannelCard(ch) {
       const entry = {
         time:   receivedAt || new Date(),
         smCh,
+        snr:    isNaN(snr) ? NaN : snr,
         hex:    Array.from(ax25).map(b => b.toString(16).padStart(2, '0')).join(' '),
         parsed,
         from:   parsed ? (parsed.src || parsed.from || '') : '',
@@ -1547,6 +1951,12 @@ function renderChannelCard(ch) {
       updateAgoDisplay();
       startAgoTimer();
       renderFrames();
+      // Notify waterfall of the decoded frame so it can draw a callsign marker
+      if (wfHandle && wfHandle.notifyFrame) {
+        const smChannels = (ch.modem_config || {}).channels || [];
+        const modemIdx = (smChannels[smCh] || {}).modem ?? 1;
+        wfHandle.notifyFrame(entry, modemIdx);
+      }
 
     } else if (type === MSG_DCD) {
       if (data.length < 3) return;

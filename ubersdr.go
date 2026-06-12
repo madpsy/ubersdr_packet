@@ -100,6 +100,9 @@ type instance struct {
 
 	// AudioCh delivers decoded mono S16LE PCM chunks.
 	AudioCh chan []byte
+	// SNRCh delivers per-packet SNR values (dB) alongside AudioCh.
+	// NaN is sent when the packet carries no power data (v1 or minimal header).
+	SNRCh chan float32
 }
 
 func newInstance(freqHz, carrierHz int, audioMode, ubersdrURL, password, labelOverride string, bandwidthHz int) *instance {
@@ -120,6 +123,7 @@ func newInstance(freqHz, carrierHz int, audioMode, ubersdrURL, password, labelOv
 		status:      "stopped",
 		reconnectCh: make(chan struct{}),
 		AudioCh:     make(chan []byte, 256),
+		SNRCh:       make(chan float32, 256),
 	}
 }
 
@@ -389,10 +393,17 @@ func (inst *instance) runOnce(ctx context.Context) (reconnect bool) {
 				pcmData = downmixStereoToMono(pcmData)
 			}
 
+			// Compute per-packet SNR (dB). Both fields are NaN for v1/minimal packets.
+			snr := pkt.basebandDBFS - pkt.noiseDBFS
+
 			select {
 			case inst.AudioCh <- pcmData:
 			default:
 				// Drop if consumer is behind
+			}
+			select {
+			case inst.SNRCh <- snr:
+			default:
 			}
 
 		case websocket.TextMessage:
