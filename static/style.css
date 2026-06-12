@@ -48,9 +48,48 @@ header h1 {
   font-size: 1.1rem;
   font-weight: 600;
   color: var(--accent);
-  flex: 1;
+  flex-shrink: 0;
 }
 .header-actions { display: flex; align-items: center; gap: 10px; }
+
+/* ── Receiver info (header) ──────────────────────────────────────────────── */
+.rx-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 0.82em;
+  color: var(--text-dim);
+  flex: 1;
+  min-width: 0;
+}
+.rx-info.hidden { display: none; }
+.rx-callsign {
+  font-weight: 700;
+  color: var(--accent);
+  font-size: 1em;
+  letter-spacing: 0.03em;
+}
+.rx-name {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 260px;
+}
+.rx-location {
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+.rx-map-btn {
+  text-decoration: none;
+  padding: 3px 8px;
+  font-size: 0.85em;
+  flex-shrink: 0;
+}
 
 /* ── Buttons ─────────────────────────────────────────────────────────────── */
 .btn {

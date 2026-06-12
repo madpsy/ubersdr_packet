@@ -2107,6 +2107,39 @@ function connectSSE() {
 // Init
 // ---------------------------------------------------------------------------
 
+async function loadReceiverInfo() {
+  try {
+    const resp = await fetch(window.location.origin + '/api/description');
+    if (!resp.ok) return;
+    const d = await resp.json();
+    const rx = d.receiver || {};
+    const callsign = rx.callsign || '';
+    const name     = rx.name     || '';
+    const location = rx.location || '';
+    const lat      = rx.gps && rx.gps.lat;
+    const lon      = rx.gps && rx.gps.lon;
+
+    if (!callsign && !name && !location) return;
+
+    const el = document.getElementById('rx-info');
+    if (!el) return;
+
+    let html = '';
+    if (callsign) html += `<span class="rx-callsign">${callsign}</span>`;
+    if (name)     html += `<span class="rx-name">${name}</span>`;
+    if (location) html += `<span class="rx-location">📍 ${location}</span>`;
+    if (lat != null && lon != null) {
+      const mapsUrl = `https://www.google.com/maps?q=${lat},${lon}`;
+      html += `<a class="btn btn-secondary btn-sm rx-map-btn" href="${mapsUrl}" target="_blank" rel="noopener" title="Open in Google Maps">🗺 Map</a>`;
+    }
+
+    el.innerHTML = html;
+    el.classList.remove('hidden');
+  } catch (e) {
+    // Silently ignore — /api/description may not exist on all deployments
+  }
+}
+
 async function loadConfig() {
   try {
     const resp = await fetch(BASE + '/api/config');
@@ -2148,6 +2181,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Load config (sets state.mqttConfigured etc.) and auth status before
   // rendering channels so the config pane has the correct feature flags.
   await Promise.all([loadConfig(), checkAuth()]);
+  loadReceiverInfo(); // fire-and-forget; silently ignored if endpoint absent
   await loadChannels();
   connectSSE();
 
