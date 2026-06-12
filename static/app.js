@@ -987,19 +987,21 @@ function drawWaterfallOverlay(ovlCtx, channelFreqs, mouseX, txEvents, currentLin
         ovlCtx.stroke();
       }
 
-      // Callsign label — pin to top of bar (or top of canvas if scrolled off)
+      // Callsign label — centred on the channel centre frequency
       const labelY = Math.max(y1 + 2, 2);
       if (labelY < h - 4) {
         ovlCtx.font         = 'bold 10px monospace';
-        ovlCtx.textAlign    = 'left';
+        ovlCtx.textAlign    = 'center';
         ovlCtx.textBaseline = 'top';
         const label = ev.callsign;
+        const xCtr  = Math.round((chCfg.freq / WF_MAX_FREQ) * w);
         const tw    = ovlCtx.measureText(label).width;
-        const bx    = Math.min(xLo + 2, w - tw - 6);
+        // Clamp so the label doesn't overflow the canvas edges
+        const cx    = Math.max(tw / 2 + 2, Math.min(w - tw / 2 - 2, xCtr));
         ovlCtx.fillStyle = 'rgba(0,0,0,0.75)';
-        ovlCtx.fillRect(bx - 1, labelY - 1, tw + 4, 12);
+        ovlCtx.fillRect(cx - tw / 2 - 2, labelY - 1, tw + 4, 12);
         ovlCtx.fillStyle = color;
-        ovlCtx.fillText(label, bx + 1, labelY);
+        ovlCtx.fillText(label, cx, labelY);
       }
       ovlCtx.restore();
     });
