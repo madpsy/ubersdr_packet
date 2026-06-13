@@ -1102,8 +1102,18 @@ function attachWaterfall(wfWrap, label, channelFreqs) {
   const txEvents = [];
 
   // Web Audio setup
-  let audioCtx = null, analyser = null, gainNode = null, source = null, fftBuf = null;
-  let audioEl = null;
+  let audioCtx = null, analyser = null, gainNode = null, fftBuf = null;
+  // fetch-based streaming state (replaces <audio>/createMediaElementSource for Safari compat)
+  let audioFetchCtrl = null;   // AbortController for the active fetch
+  let audioNextTime  = 0;      // AudioContext time to schedule the next buffer
+  let audioSampleRate = 0;     // sample rate parsed from WAV header
+  let audioHeaderParsed = false;
+  let audioAccum = new Uint8Array(0); // accumulator for partial PCM data
+  let audioStreamGen = 0;      // incremented on each startAudio() to invalidate stale callbacks
+  // Scheduling constants
+  const AUDIO_SCHEDULE_AHEAD_S = 0.1;
+  const AUDIO_MAX_LEAD_S       = 0.4;
+  const AUDIO_CHUNK_BYTES      = 4410; // ~200 ms at 11025 Hz mono S16LE
   let wfLastLineAt = 0, wfRafId = null, stopped = false;
   // wfLineCount: total lines rendered since start — used to convert time → row position
   let wfLineCount = 0;
@@ -1152,8 +1162,20 @@ function attachWaterfall(wfWrap, label, channelFreqs) {
     drawWaterfallOverlay(ovlCtx, channelFreqs, mouseX, txEvents, wfLineCount);
   }
 
-  async function startAudio() {
-    try {
+  function startAudio() {
+    // Abort any previous fetch stream.
+    if (audioFetchCtrl) { audioFetchCtrl.abort(); audioFetchCtrl = null; }
+
+    // Reset per-stream state.
+    audioSampleRate   = 0;
+    audioHeaderParsed = false;
+    audioAccum        = new Uint8Array(0);
+    audioStreamGen++;
+
+    // Create AudioContext + graph once (reuse across reconnects so
+    // currentTime is monotonically increasing and the scheduler stays coherent).
+    // This must be called from a user-gesture handler on Safari.
+    if (!audioCtx) {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       analyser = audioCtx.createAnalyser();
       analyser.fftSize = 2048;
@@ -1165,45 +1187,120 @@ function attachWaterfall(wfWrap, label, channelFreqs) {
       gainNode.gain.value = 0.8;
       analyser.connect(gainNode);
       gainNode.connect(audioCtx.destination);
-
-      // Point an <audio> element directly at the streaming WAV URL.
-      // Browsers handle streaming WAV natively; MediaSource does not support
-      // audio/wav in Firefox so we avoid it entirely.
-      audioEl = document.createElement('audio');
-      audioEl.src = BASE + '/api/audio/' + encodeURIComponent(label);
-      audioEl.crossOrigin = 'anonymous';
-      audioEl.style.display = 'none';
-      document.body.appendChild(audioEl); // Safari requires element in DOM before createMediaElementSource
-
-      // Browsers can stall on long-running streaming WAV (buffer fills up,
-      // or the element fires 'stalled'/'waiting'/'ended'). Resume playback
-      // automatically whenever this happens.
-      const resume = () => {
-        if (stopped) return;
-        audioEl.play().catch(() => {});
-      };
-      audioEl.addEventListener('stalled', resume);
-      audioEl.addEventListener('waiting', resume);
-      audioEl.addEventListener('ended',   resume);
-      audioEl.addEventListener('error', () => {
-        if (stopped) return;
-        // On error, reload the stream after a short delay
-        setTimeout(() => {
-          if (stopped) return;
-          audioEl.load();
-          audioEl.play().catch(() => {});
-        }, 2000);
-      });
-
-      source = audioCtx.createMediaElementSource(audioEl);
-      source.connect(analyser);
-      await audioEl.play();
-      wfRafId = requestAnimationFrame(renderLine);
-    } catch (err) {
-      console.warn('[waterfall] audio start failed:', err);
-      // Waterfall-only mode: still run the RAF loop but with no audio data
-      // (fftBuf stays null, renderLine is a no-op until analyser is set)
+    } else {
+      audioCtx.resume().catch(() => {});
     }
+
+    // Start the RAF waterfall loop now that the analyser exists.
+    if (!wfRafId) wfRafId = requestAnimationFrame(renderLine);
+
+    const myCtrl = new AbortController();
+    audioFetchCtrl = myCtrl;
+    const capturedGen = audioStreamGen;
+
+    const url = BASE + '/api/audio/' + encodeURIComponent(label);
+    console.log('[waterfall] starting audio fetch:', url);
+
+    fetch(url, { signal: myCtrl.signal })
+      .then(resp => {
+        if (!resp.ok) throw new Error('audio HTTP ' + resp.status);
+        const reader = resp.body.getReader();
+        function pump() {
+          return reader.read().then(({ done, value }) => {
+            if (done || audioFetchCtrl !== myCtrl) return;
+            processAudioChunk(value, capturedGen);
+            return pump();
+          });
+        }
+        return pump();
+      })
+      .then(() => {
+        if (audioFetchCtrl !== myCtrl || stopped) return;
+        console.log('[waterfall] audio stream ended — reconnecting in 500 ms');
+        setTimeout(() => { if (!stopped && audioFetchCtrl === myCtrl) startAudio(); }, 500);
+      })
+      .catch(err => {
+        if (err.name === 'AbortError') return;
+        console.warn('[waterfall] audio fetch error:', err);
+        if (audioFetchCtrl !== myCtrl || stopped) return;
+        setTimeout(() => { if (!stopped && audioFetchCtrl === myCtrl) startAudio(); }, 1000);
+      });
+  }
+
+  // Accumulate incoming bytes; once we have the WAV header + enough PCM,
+  // decode and schedule AudioBufferSourceNodes.
+  function processAudioChunk(bytes, capturedGen) {
+    if (!bytes || bytes.length === 0) return;
+    const merged = new Uint8Array(audioAccum.length + bytes.length);
+    merged.set(audioAccum);
+    merged.set(bytes, audioAccum.length);
+    audioAccum = merged;
+
+    // Parse the 44-byte WAV header once.
+    if (!audioHeaderParsed) {
+      if (audioAccum.length < 44) return;
+      const view = new DataView(audioAccum.buffer);
+      audioSampleRate   = view.getUint32(24, true);
+      audioHeaderParsed = true;
+      audioAccum        = audioAccum.slice(44);
+    }
+
+    // Decode and schedule complete chunks.
+    while (audioAccum.length >= AUDIO_CHUNK_BYTES) {
+      const pcm  = audioAccum.slice(0, AUDIO_CHUNK_BYTES);
+      audioAccum = audioAccum.slice(AUDIO_CHUNK_BYTES);
+      schedulePCMChunk(pcm, capturedGen);
+    }
+  }
+
+  // Wrap raw S16LE PCM bytes in a minimal WAV container, decode via
+  // AudioContext.decodeAudioData, then schedule the resulting AudioBufferSourceNode.
+  // Each source node is connected: src → analyser → gainNode → destination
+  // so the AnalyserNode receives data for the waterfall FFT.
+  function schedulePCMChunk(pcm, capturedGen) {
+    if (!audioCtx || !analyser || !gainNode) return;
+    const sr = audioSampleRate || 11025;
+
+    // Assign the scheduled start time synchronously before the async decode
+    // so that ordering is guaranteed even when decodes complete out of order.
+    const now = audioCtx.currentTime;
+    if (audioNextTime < now || audioNextTime > now + AUDIO_MAX_LEAD_S) {
+      audioNextTime = now + AUDIO_SCHEDULE_AHEAD_S;
+    }
+    const chunkDuration = pcm.length / 2 / sr; // S16LE mono: 2 bytes/sample
+    const startTime = audioNextTime;
+    audioNextTime += chunkDuration;
+
+    // Build a minimal WAV container around the raw PCM.
+    const wavBuf = new ArrayBuffer(44 + pcm.length);
+    const view   = new DataView(wavBuf);
+    const enc    = new TextEncoder();
+    const wr4    = (off, s) => { const b = enc.encode(s); for (let i = 0; i < 4; i++) view.setUint8(off + i, b[i]); };
+    wr4(0,  'RIFF');
+    view.setUint32(4,  36 + pcm.length, true);
+    wr4(8,  'WAVE');
+    wr4(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1,  true); // PCM
+    view.setUint16(22, 1,  true); // mono
+    view.setUint32(24, sr, true);
+    view.setUint32(28, sr * 2, true);
+    view.setUint16(32, 2,  true);
+    view.setUint16(34, 16, true);
+    wr4(36, 'data');
+    view.setUint32(40, pcm.length, true);
+    new Uint8Array(wavBuf, 44).set(pcm);
+
+    audioCtx.decodeAudioData(wavBuf).then(audioBuf => {
+      if (audioStreamGen !== capturedGen) return; // stale — stream was replaced
+      const src = audioCtx.createBufferSource();
+      src.buffer = audioBuf;
+      // Route through analyser so the waterfall FFT sees the audio data.
+      src.connect(analyser);
+      src.start(startTime);
+    }).catch(err => {
+      console.warn('[waterfall] decodeAudioData:', err);
+    });
   }
 
   startAudio();
@@ -1213,11 +1310,11 @@ function attachWaterfall(wfWrap, label, channelFreqs) {
       stopped = true;
       if (wfRafId) cancelAnimationFrame(wfRafId);
       ro.disconnect();
-      if (source) try { source.disconnect(); } catch(_){}
+      if (audioFetchCtrl) { audioFetchCtrl.abort(); audioFetchCtrl = null; }
+      audioStreamGen++; // invalidate any in-flight decodeAudioData callbacks
       if (analyser) try { analyser.disconnect(); } catch(_){}
       if (gainNode) try { gainNode.disconnect(); } catch(_){}
       if (audioCtx) audioCtx.close().catch(()=>{});
-      if (audioEl && audioEl.parentNode) audioEl.parentNode.removeChild(audioEl);
     },
     toggleMute() {
       if (!gainNode) return false;
@@ -1241,22 +1338,18 @@ function attachWaterfall(wfWrap, label, channelFreqs) {
       const durationMs    = MODEM_TX_MS[modemIdx] ?? 570;
       const durationLines = Math.max(2, Math.round(durationMs / WF_LINE_MS));
 
-      // Compensate for the browser's audio lookahead buffer.
-      // The <audio> element buffers ahead of the playback cursor, so the
-      // waterfall is showing audio from ~bufferSec seconds ago relative to
-      // wall-clock time. The SSE frame decode event fires at real-time, so
-      // without compensation the marker appears too early (too high up).
-      // audioEl.buffered.end(0) - audioEl.currentTime gives the buffered
-      // lookahead in seconds; convert to waterfall lines and shift the marker
-      // forward (down) by that amount so it aligns with the visible audio.
+      // Compensate for the audio scheduler's lookahead.
+      // audioNextTime is the AudioContext time of the next chunk to be scheduled;
+      // audioCtx.currentTime is what is currently playing.  The difference is how
+      // far ahead the scheduler is running relative to the playhead — i.e. how
+      // many seconds of audio are queued but not yet heard.  Convert to waterfall
+      // lines and shift the TX marker forward (down) so it aligns with the audio.
       let bufferLines = 0;
-      if (audioEl && audioEl.buffered && audioEl.buffered.length > 0) {
-        try {
-          const bufferSec = audioEl.buffered.end(audioEl.buffered.length - 1) - audioEl.currentTime;
-          if (bufferSec > 0 && bufferSec < 30) { // sanity-clamp
-            bufferLines = Math.round(bufferSec * 1000 / WF_LINE_MS);
-          }
-        } catch (_) {}
+      if (audioCtx) {
+        const bufferSec = audioNextTime - audioCtx.currentTime;
+        if (bufferSec > 0 && bufferSec < 30) { // sanity-clamp
+          bufferLines = Math.round(bufferSec * 1000 / WF_LINE_MS);
+        }
       }
 
       // The decode fires AFTER the full frame has been received, so the
