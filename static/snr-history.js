@@ -25,10 +25,17 @@ window.SNRHistory = (() => {
   let selChannel  = '';   // currently selected channel label
   let selSmCh     = -1;   // currently selected modem sub-channel (-1 = all)
   let selSender   = '';   // currently selected callsign
-  let frames      = [];   // [{received_at, snr}] newest-first from API
+  let frames      = [];   // [{received_at, snr}] newest-first from API (single-sender mode)
+  let seriesData  = [];   // [{callsign, smCh, color, frames:[]}] multi-sender mode
   let loading     = false;
   let autoRefresh = false;
   let autoTimer   = null;
+
+  // Palette for multi-sender mode (distinct, readable on dark bg)
+  const SERIES_COLORS = [
+    '#4a9eff', '#e0b84a', '#3ecf6e', '#e05252',
+    '#b07fff', '#ff8c42', '#00d4d4', '#ff6eb4',
+  ];
 
   const AUTO_INTERVAL_MS = 5000;
 
@@ -37,7 +44,7 @@ window.SNRHistory = (() => {
   // -------------------------------------------------------------------------
   let modal, overlay, selCh, selSm, selSnd, canvas, ctx,
       statusEl, titleEl, countEl, refreshBtn, closeBtn,
-      smRow, autoChk;
+      smRow, autoChk, legendEl;
 
   // -------------------------------------------------------------------------
   // Build DOM (once)
@@ -174,19 +181,16 @@ window.SNRHistory = (() => {
     canvasWrap.appendChild(canvas);
 
     // ── Legend ──
-    const legend = document.createElement('div');
-    legend.className = 'snrh-legend';
-    legend.innerHTML =
-      '<span class="snrh-leg snrh-leg-good">● &gt;60 dB</span>' +
-      '<span class="snrh-leg snrh-leg-ok">● 40–60 dB</span>' +
-      '<span class="snrh-leg snrh-leg-poor">● &lt;40 dB</span>';
+    legendEl = document.createElement('div');
+    legendEl.className = 'snrh-legend';
+    // Content is set dynamically by updateLegend()
 
     // Assemble
     modal.appendChild(hdr);
     modal.appendChild(controls);
     modal.appendChild(meta);
     modal.appendChild(canvasWrap);
-    modal.appendChild(legend);
+    modal.appendChild(legendEl);
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
 
@@ -331,40 +335,137 @@ window.SNRHistory = (() => {
   }
 
   async function loadData() {
-    const parsed = parseSenderKey(selSender);
-    if (!selChannel || !parsed) {
-      frames = [];
+    if (!selChannel) {
+      frames     = [];
+      seriesData = [];
       setStatus('');
+      updateLegend();
       draw();
       return;
     }
+
+    // ── Single-sender mode ──
+    const parsed = parseSenderKey(selSender);
+    if (parsed) {
+      if (loading) return;
+      loading = true;
+      seriesData = [];
+      setStatus('Loading…');
+      try {
+        let url = BASE() +
+          '/api/frames?channel=' + encodeURIComponent(selChannel) +
+          '&from_exact=' + encodeURIComponent(parsed.callsign) +
+          '&limit=1000' +
+          '&fields=snr';
+        if (parsed.smCh >= 0) {
+          url += '&sm_ch=' + parsed.smCh;
+        }
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        frames = data
+          .filter(f => f.snr !== null && f.snr !== undefined)
+          .reverse();
+        setStatus('', frames.length + ' data points');
+        updateLegend();
+        draw();
+      } catch (e) {
+        setStatus('Error: ' + e.message);
+        frames = [];
+        updateLegend();
+        draw();
+      } finally {
+        loading = false;
+      }
+      return;
+    }
+
+    // ── Multi-sender mode: top-5 most recent senders for this channel ──
     if (loading) return;
     loading = true;
+    frames = [];
     setStatus('Loading…');
     try {
-      let url = BASE() +
-        '/api/frames?channel=' + encodeURIComponent(selChannel) +
-        '&from_exact=' + encodeURIComponent(parsed.callsign) +
-        '&limit=1000' +
-        '&fields=snr';
-      if (parsed.smCh >= 0) {
-        url += '&sm_ch=' + parsed.smCh;
+      const ch = channels.find(c => c.label === selChannel);
+      // Senders filtered by sub-channel selection, sorted by last_seen desc, take 5
+      const candidates = ch
+        ? ch.senders
+            .filter(s => selSmCh === -1 || s.sm_ch === selSmCh)
+            .slice()
+            .sort((a, b) => {
+              const ta = a.last_seen ? new Date(a.last_seen).getTime() : 0;
+              const tb = b.last_seen ? new Date(b.last_seen).getTime() : 0;
+              return tb - ta;
+            })
+            .slice(0, 5)
+        : [];
+
+      if (!candidates.length) {
+        seriesData = [];
+        setStatus('', '0 data points');
+        updateLegend();
+        draw();
+        return;
       }
-      const resp = await fetch(url);
-      if (!resp.ok) throw new Error('HTTP ' + resp.status);
-      const data = await resp.json();
-      // Keep only frames with valid SNR, oldest-first for the graph
-      frames = data
-        .filter(f => f.snr !== null && f.snr !== undefined)
-        .reverse();
-      setStatus('', frames.length + ' data points');
+
+      const results = await Promise.all(candidates.map(async (s, i) => {
+        let url = BASE() +
+          '/api/frames?channel=' + encodeURIComponent(selChannel) +
+          '&from_exact=' + encodeURIComponent(s.callsign) +
+          '&limit=200' +
+          '&fields=snr';
+        if (s.sm_ch >= 0) url += '&sm_ch=' + s.sm_ch;
+        const resp = await fetch(url);
+        if (!resp.ok) return null;
+        const data = await resp.json();
+        const validFrames = data
+          .filter(f => f.snr !== null && f.snr !== undefined)
+          .reverse();
+        const chLabel = SM_CH_LABELS[s.sm_ch] !== undefined ? ' [' + SM_CH_LABELS[s.sm_ch] + ']' : '';
+        return {
+          callsign: s.callsign + chLabel,
+          smCh:     s.sm_ch,
+          color:    SERIES_COLORS[i % SERIES_COLORS.length],
+          frames:   validFrames,
+        };
+      }));
+
+      seriesData = results.filter(Boolean);
+      const total = seriesData.reduce((n, s) => n + s.frames.length, 0);
+      setStatus('', total + ' data points across ' + seriesData.length + ' senders');
+      updateLegend();
       draw();
     } catch (e) {
       setStatus('Error: ' + e.message);
-      frames = [];
+      seriesData = [];
+      updateLegend();
       draw();
     } finally {
       loading = false;
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Legend
+  // -------------------------------------------------------------------------
+  function updateLegend() {
+    if (selSender) {
+      // Single-sender: show dB band legend
+      legendEl.innerHTML =
+        '<span class="snrh-leg snrh-leg-good">● &gt;60 dB</span>' +
+        '<span class="snrh-leg snrh-leg-ok">● 40–60 dB</span>' +
+        '<span class="snrh-leg snrh-leg-poor">● &lt;40 dB</span>';
+    } else if (seriesData.length) {
+      // Multi-sender: show one coloured entry per sender
+      legendEl.innerHTML = seriesData.map(s =>
+        `<span class="snrh-leg snrh-leg-sender" style="color:${s.color}">● ${s.callsign}</span>`
+      ).join('');
+    } else {
+      // Nothing loaded yet — show dB bands as default
+      legendEl.innerHTML =
+        '<span class="snrh-leg snrh-leg-good">● &gt;60 dB</span>' +
+        '<span class="snrh-leg snrh-leg-ok">● 40–60 dB</span>' +
+        '<span class="snrh-leg snrh-leg-poor">● &lt;40 dB</span>';
     }
   }
 
@@ -442,21 +543,27 @@ window.SNRHistory = (() => {
     ctx.lineTo(PAD.left + gW, PAD.top + gH);
     ctx.stroke();
 
-    if (!frames.length) {
-      ctx.fillStyle   = '#7a88aa';
-      ctx.font        = '13px sans-serif';
-      ctx.textAlign   = 'center';
+    // Determine which dataset(s) to draw
+    const isMulti  = !selSender && seriesData.length > 0;
+    const allFrames = isMulti
+      ? seriesData.flatMap(s => s.frames)
+      : frames;
+
+    if (!allFrames.length) {
+      ctx.fillStyle    = '#7a88aa';
+      ctx.font         = '13px sans-serif';
+      ctx.textAlign    = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(
-        selChannel && selSender ? 'No SNR data for this sender' : 'Select a channel and sender',
+        selChannel ? 'No SNR data available' : 'Select a channel',
         PAD.left + gW / 2, PAD.top + gH / 2
       );
       return;
     }
 
-    // X axis: time range
-    const t0 = new Date(frames[0].received_at).getTime();
-    const t1 = new Date(frames[frames.length - 1].received_at).getTime();
+    // X axis: time range across all visible frames
+    const t0 = Math.min(...allFrames.map(f => new Date(f.received_at).getTime()));
+    const t1 = Math.max(...allFrames.map(f => new Date(f.received_at).getTime()));
     const tSpan = Math.max(t1 - t0, 1);
 
     // X axis labels (up to 6 ticks)
@@ -473,39 +580,79 @@ window.SNRHistory = (() => {
       ctx.fillText(label, x, PAD.top + gH + 6);
     }
 
-    // Line + dots
-    ctx.lineWidth = 1.5;
-    ctx.strokeStyle = '#4a9eff44';
-    ctx.beginPath();
-    let first = true;
-    frames.forEach(f => {
-      const snr = f.snr;
-      const t   = new Date(f.received_at).getTime();
-      const x   = PAD.left + (t - t0) / tSpan * gW;
-      const y   = PAD.top  + gH - ((Math.min(Math.max(snr, SNR_MIN), SNR_MAX) - SNR_MIN) / (SNR_MAX - SNR_MIN)) * gH;
-      if (first) { ctx.moveTo(x, y); first = false; }
-      else        ctx.lineTo(x, y);
-    });
-    ctx.stroke();
+    if (isMulti) {
+      // ── Multi-sender: draw each series in its own colour ──
+      seriesData.forEach(series => {
+        if (!series.frames.length) return;
+        const col = series.color;
 
-    // Dots coloured by SNR band
-    frames.forEach(f => {
-      const snr = f.snr;
-      const t   = new Date(f.received_at).getTime();
-      const x   = PAD.left + (t - t0) / tSpan * gW;
-      const y   = PAD.top  + gH - ((Math.min(Math.max(snr, SNR_MIN), SNR_MAX) - SNR_MIN) / (SNR_MAX - SNR_MIN)) * gH;
+        // Line
+        ctx.lineWidth   = 1.5;
+        ctx.strokeStyle = col + '88';
+        ctx.beginPath();
+        let first = true;
+        series.frames.forEach(f => {
+          const t = new Date(f.received_at).getTime();
+          const x = PAD.left + (t - t0) / tSpan * gW;
+          const y = PAD.top  + gH - ((Math.min(Math.max(f.snr, SNR_MIN), SNR_MAX) - SNR_MIN) / (SNR_MAX - SNR_MIN)) * gH;
+          if (first) { ctx.moveTo(x, y); first = false; }
+          else        ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+
+        // Dots — filled with series colour, outlined with SNR-band colour for context
+        series.frames.forEach(f => {
+          const t = new Date(f.received_at).getTime();
+          const x = PAD.left + (t - t0) / tSpan * gW;
+          const y = PAD.top  + gH - ((Math.min(Math.max(f.snr, SNR_MIN), SNR_MAX) - SNR_MIN) / (SNR_MAX - SNR_MIN)) * gH;
+          ctx.beginPath();
+          ctx.arc(x, y, 3.5, 0, Math.PI * 2);
+          ctx.fillStyle   = col;
+          ctx.strokeStyle = snrColor(f.snr);
+          ctx.lineWidth   = 1.5;
+          ctx.fill();
+          ctx.stroke();
+        });
+      });
+
+      // Store all frames for tooltip (tagged with series colour)
+      canvas._frames  = seriesData.flatMap(s => s.frames.map(f => ({ ...f, _color: s.color, _label: s.callsign })));
+      canvas._isMulti = true;
+    } else {
+      // ── Single-sender: original rendering ──
+      ctx.lineWidth   = 1.5;
+      ctx.strokeStyle = '#4a9eff44';
       ctx.beginPath();
-      ctx.arc(x, y, 3, 0, Math.PI * 2);
-      ctx.fillStyle = snrColor(snr);
-      ctx.fill();
-    });
+      let first = true;
+      frames.forEach(f => {
+        const snr = f.snr;
+        const t   = new Date(f.received_at).getTime();
+        const x   = PAD.left + (t - t0) / tSpan * gW;
+        const y   = PAD.top  + gH - ((Math.min(Math.max(snr, SNR_MIN), SNR_MAX) - SNR_MIN) / (SNR_MAX - SNR_MIN)) * gH;
+        if (first) { ctx.moveTo(x, y); first = false; }
+        else        ctx.lineTo(x, y);
+      });
+      ctx.stroke();
 
-    // Hover tooltip (mouse tracking)
-    canvas._frames = frames;
-    canvas._t0     = t0;
-    canvas._tSpan  = tSpan;
-    canvas._gW     = gW;
-    canvas._gH     = gH;
+      frames.forEach(f => {
+        const snr = f.snr;
+        const t   = new Date(f.received_at).getTime();
+        const x   = PAD.left + (t - t0) / tSpan * gW;
+        const y   = PAD.top  + gH - ((Math.min(Math.max(snr, SNR_MIN), SNR_MAX) - SNR_MIN) / (SNR_MAX - SNR_MIN)) * gH;
+        ctx.beginPath();
+        ctx.arc(x, y, 3, 0, Math.PI * 2);
+        ctx.fillStyle = snrColor(snr);
+        ctx.fill();
+      });
+
+      canvas._frames  = frames;
+      canvas._isMulti = false;
+    }
+
+    canvas._t0    = t0;
+    canvas._tSpan = tSpan;
+    canvas._gW    = gW;
+    canvas._gH    = gH;
   }
 
   // -------------------------------------------------------------------------
@@ -540,7 +687,10 @@ window.SNRHistory = (() => {
 
       const d   = new Date(best.fr.received_at);
       const snr = best.fr.snr.toFixed(1);
-      tip.innerHTML = `<strong>${snr} dB</strong><br>${d.toLocaleTimeString()}<br>${d.toLocaleDateString()}`;
+      const senderLine = canvas._isMulti && best.fr._label
+        ? `<span style="color:${best.fr._color}">${best.fr._label}</span><br>`
+        : '';
+      tip.innerHTML = `${senderLine}<strong>${snr} dB</strong><br>${d.toLocaleTimeString()}<br>${d.toLocaleDateString()}`;
       tip.classList.remove('hidden');
 
       // Position tip so it stays inside modal

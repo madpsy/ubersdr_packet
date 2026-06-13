@@ -1950,7 +1950,7 @@ function renderChannelCard(ch) {
   // MQTT topic row — always rendered; CSS hides it unless body.mqtt-enabled.
   // Split into read-only prefix badge + editable suffix so the full topic path
   // is always visible: [packet/] [mychannel]
-  const globalPfx = state.mqttTopicPrefix;
+  const globalPfx = window.state ? window.state.mqttTopicPrefix : 'ubersdr';
   // mqtt_topic_prefix stores only the suffix (the part after the global prefix).
   // Default to the channel label when nothing is stored.
   const initSuffix = ch.mqtt_topic_prefix || ch.label;

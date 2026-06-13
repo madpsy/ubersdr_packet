@@ -1127,14 +1127,16 @@ body.mqtt-enabled .mqtt-prefix-row {
 
 .snrh-legend {
   display: flex;
-  gap: 16px;
+  flex-wrap: wrap;
+  gap: 8px 16px;
   font-size: 0.78em;
   color: var(--text-dim);
 }
 .snrh-leg { display: flex; align-items: center; gap: 4px; }
-.snrh-leg-good { color: var(--green); }
-.snrh-leg-ok   { color: var(--yellow); }
-.snrh-leg-poor { color: var(--red); }
+.snrh-leg-good   { color: var(--green); }
+.snrh-leg-ok     { color: var(--yellow); }
+.snrh-leg-poor   { color: var(--red); }
+.snrh-leg-sender { font-weight: 600; letter-spacing: 0.02em; }
 
 .snrh-tooltip {
   position: absolute;
