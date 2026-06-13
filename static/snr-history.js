@@ -27,6 +27,8 @@ window.SNRHistory = (() => {
   let selSender   = '';   // currently selected callsign
   let frames      = [];   // [{received_at, snr}] newest-first from API (single-sender mode)
   let seriesData  = [];   // [{callsign, smCh, color, frames:[]}] multi-sender mode
+  const callsignColorMap = new Map(); // callsign+smCh key → stable color index
+  let nextColorIdx = 0;
   let loading     = false;
   let autoRefresh = false;
   let autoTimer   = null;
@@ -35,6 +37,7 @@ window.SNRHistory = (() => {
   const SERIES_COLORS = [
     '#4a9eff', '#e0b84a', '#3ecf6e', '#e05252',
     '#b07fff', '#ff8c42', '#00d4d4', '#ff6eb4',
+    '#a8e063', '#f06292',
   ];
 
   const AUTO_INTERVAL_MS = 5000;
@@ -397,7 +400,7 @@ window.SNRHistory = (() => {
               const tb = b.last_seen ? new Date(b.last_seen).getTime() : 0;
               return tb - ta;
             })
-            .slice(0, 5)
+            .slice(0, 10)
         : [];
 
       if (!candidates.length) {
@@ -408,7 +411,16 @@ window.SNRHistory = (() => {
         return;
       }
 
-      const results = await Promise.all(candidates.map(async (s, i) => {
+      const results = await Promise.all(candidates.map(async (s) => {
+        // Assign a stable colour index per callsign+smCh so colours don't
+        // change when new senders appear and shift the sort order.
+        const colorKey = s.callsign + ':' + s.sm_ch;
+        if (!callsignColorMap.has(colorKey)) {
+          callsignColorMap.set(colorKey, nextColorIdx % SERIES_COLORS.length);
+          nextColorIdx++;
+        }
+        const color = SERIES_COLORS[callsignColorMap.get(colorKey)];
+
         let url = BASE() +
           '/api/frames?channel=' + encodeURIComponent(selChannel) +
           '&from_exact=' + encodeURIComponent(s.callsign) +
@@ -425,7 +437,7 @@ window.SNRHistory = (() => {
         return {
           callsign: s.callsign + chLabel,
           smCh:     s.sm_ch,
-          color:    SERIES_COLORS[i % SERIES_COLORS.length],
+          color,
           frames:   validFrames,
         };
       }));
