@@ -1172,6 +1172,8 @@ function attachWaterfall(wfWrap, label, channelFreqs) {
       audioEl = document.createElement('audio');
       audioEl.src = BASE + '/api/audio/' + encodeURIComponent(label);
       audioEl.crossOrigin = 'anonymous';
+      audioEl.style.display = 'none';
+      document.body.appendChild(audioEl); // Safari requires element in DOM before createMediaElementSource
 
       // Browsers can stall on long-running streaming WAV (buffer fills up,
       // or the element fires 'stalled'/'waiting'/'ended'). Resume playback
@@ -1215,6 +1217,7 @@ function attachWaterfall(wfWrap, label, channelFreqs) {
       if (analyser) try { analyser.disconnect(); } catch(_){}
       if (gainNode) try { gainNode.disconnect(); } catch(_){}
       if (audioCtx) audioCtx.close().catch(()=>{});
+      if (audioEl && audioEl.parentNode) audioEl.parentNode.removeChild(audioEl);
     },
     toggleMute() {
       if (!gainNode) return false;
