@@ -1998,6 +1998,20 @@ function renderChannelCard(ch) {
     });
     if (resp.status === 401) { showLoginModal(); return; }
     if (resp.ok) {
+      // Update the local ch object so getChannelFreqs() and the waterfall
+      // header reflect the newly-saved modem channel config immediately,
+      // without requiring a full page reload.
+      ch.modem_config = newCfg;
+      if (patchBody.name) ch.name = patchBody.name;
+      if (patchBody.freq_hz) ch.instance.freq_hz = patchBody.freq_hz;
+      if (patchBody.mode)    ch.instance.audio_mode = patchBody.mode;
+      ch.bandwidth_hz = patchBody.bandwidth_hz;
+      ch.mqtt_topic_prefix = sfx;
+      // Redraw the waterfall header/overlay with the updated channel freqs
+      // so newly-enabled sub-channels appear immediately on the next Preview.
+      if (wfHandle && wfHandle.redrawHeader) {
+        wfHandle.redrawHeader(getChannelFreqs());
+      }
       btnSave.textContent = 'Saved ✓';
       setTimeout(() => { btnSave.textContent = 'Save Config'; }, 2000);
     } else {
