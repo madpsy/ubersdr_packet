@@ -893,7 +893,7 @@ function drawWaterfallHeader(hdrCtx, channelFreqs) {
 
 // txEvents: array of { callsign, smCh, startLine, durationLines }
 // currentLine: total lines rendered so far (used to compute row position)
-function drawWaterfallOverlay(ovlCtx, channelFreqs, mouseX, txEvents, currentLine) {
+function drawWaterfallOverlay(ovlCtx, channelFreqs, mouseX, txEvents, currentLine, dialFreqHz) {
   const w = ovlCtx.canvas.width;
   const h = ovlCtx.canvas.height;
   ovlCtx.clearRect(0, 0, w, h);
@@ -1012,7 +1012,17 @@ function drawWaterfallOverlay(ovlCtx, channelFreqs, mouseX, txEvents, currentLin
 
   if (mouseX !== null) {
     const audioHz = Math.round((mouseX / w) * WF_MAX_FREQ);
-    const label   = `${audioHz} Hz`;
+
+    // Build two-line tooltip: audio offset + RF frequency (if dial freq known)
+    const line1 = `${audioHz} Hz`;
+    let line2 = null;
+    if (dialFreqHz && dialFreqHz > 0) {
+      const rfHz  = dialFreqHz + audioHz;
+      const rfKHz = rfHz / 1000;
+      line2 = rfKHz >= 1000
+        ? (rfHz / 1e6).toFixed(6) + ' MHz'
+        : rfKHz.toFixed(3) + ' kHz';
+    }
 
     ovlCtx.save();
     ovlCtx.strokeStyle = 'rgba(255,255,255,0.6)';
@@ -1024,18 +1034,24 @@ function drawWaterfallOverlay(ovlCtx, channelFreqs, mouseX, txEvents, currentLin
     ovlCtx.restore();
 
     ovlCtx.font = 'bold 10px monospace';
-    const tw = ovlCtx.measureText(label).width;
-    const bw = tw + 8, bh = 14;
+    const tw1 = ovlCtx.measureText(line1).width;
+    const tw2 = line2 ? ovlCtx.measureText(line2).width : 0;
+    const bw  = Math.max(tw1, tw2) + 8;
+    const bh  = line2 ? 26 : 14;
     let bx = mouseX + 6;
     if (bx + bw > w) bx = mouseX - bw - 6;
-    ovlCtx.fillStyle = 'rgba(0,0,0,0.75)';
+    ovlCtx.fillStyle = 'rgba(0,0,0,0.80)';
     ovlCtx.beginPath();
     if (ovlCtx.roundRect) ovlCtx.roundRect(bx, 4, bw, bh, 3);
     else ovlCtx.rect(bx, 4, bw, bh);
     ovlCtx.fill();
     ovlCtx.fillStyle = '#fff';
     ovlCtx.textBaseline = 'top';
-    ovlCtx.fillText(label, bx + 4, 7);
+    ovlCtx.fillText(line1, bx + 4, 7);
+    if (line2) {
+      ovlCtx.fillStyle = '#fff';
+      ovlCtx.fillText(line2, bx + 4, 18);
+    }
   }
 }
 
@@ -1044,7 +1060,7 @@ function drawWaterfallOverlay(ovlCtx, channelFreqs, mouseX, txEvents, currentLin
  * Returns a { stop } handle.
  * channelFreqs: [{enabled, freq, modem}, ...]
  */
-function attachWaterfall(wfWrap, label, channelFreqs) {
+function attachWaterfall(wfWrap, label, channelFreqs, dialFreqHz) {
   // Build canvas stack
   const wfBody = el('div', 'wf-body');
   const hdrCanvas = document.createElement('canvas');
@@ -1073,7 +1089,7 @@ function attachWaterfall(wfWrap, label, channelFreqs) {
     hdrCtx.fillStyle = '#000';
     hdrCtx.fillRect(0, 0, w, WF_HEIGHT);
     drawWaterfallHeader(hdrCtx, channelFreqs);
-    drawWaterfallOverlay(ovlCtx, channelFreqs, null, txEvents, wfLineCount);
+    drawWaterfallOverlay(ovlCtx, channelFreqs, null, txEvents, wfLineCount, dialFreqHz);
   }
 
   const hdrCtx = hdrCanvas.getContext('2d');
@@ -1084,11 +1100,11 @@ function attachWaterfall(wfWrap, label, channelFreqs) {
   ovlCanvas.addEventListener('mousemove', e => {
     const rect = ovlCanvas.getBoundingClientRect();
     mouseX = (e.clientX - rect.left) * (ovlCanvas.width / rect.width);
-    drawWaterfallOverlay(ovlCtx, channelFreqs, mouseX, txEvents, wfLineCount);
+    drawWaterfallOverlay(ovlCtx, channelFreqs, mouseX, txEvents, wfLineCount, dialFreqHz);
   });
   ovlCanvas.addEventListener('mouseleave', () => {
     mouseX = null;
-    drawWaterfallOverlay(ovlCtx, channelFreqs, null, txEvents, wfLineCount);
+    drawWaterfallOverlay(ovlCtx, channelFreqs, null, txEvents, wfLineCount, dialFreqHz);
   });
 
   // Delay resize until element is in DOM
@@ -1159,7 +1175,7 @@ function attachWaterfall(wfWrap, label, channelFreqs) {
     wfCtx.putImageData(imgData, 0, 0);
 
     // Redraw overlay to scroll tx markers
-    drawWaterfallOverlay(ovlCtx, channelFreqs, mouseX, txEvents, wfLineCount);
+    drawWaterfallOverlay(ovlCtx, channelFreqs, mouseX, txEvents, wfLineCount, dialFreqHz);
   }
 
   function startAudio() {
@@ -1328,7 +1344,7 @@ function attachWaterfall(wfWrap, label, channelFreqs) {
     redrawHeader(newChannelFreqs) {
       channelFreqs = newChannelFreqs;
       drawWaterfallHeader(hdrCtx, channelFreqs);
-      drawWaterfallOverlay(ovlCtx, channelFreqs, mouseX, txEvents, wfLineCount);
+      drawWaterfallOverlay(ovlCtx, channelFreqs, mouseX, txEvents, wfLineCount, dialFreqHz);
     },
     // Called by renderChannelCard when a decoded frame arrives.
     // entry: { from, smCh } — the decoded frame entry.
@@ -1368,7 +1384,7 @@ function attachWaterfall(wfWrap, label, channelFreqs) {
       // Keep ring bounded
       if (txEvents.length > TX_RING_MAX) txEvents.shift();
       // Immediately redraw overlay so the marker appears at the top
-      drawWaterfallOverlay(ovlCtx, channelFreqs, mouseX, txEvents, wfLineCount);
+      drawWaterfallOverlay(ovlCtx, channelFreqs, mouseX, txEvents, wfLineCount, dialFreqHz);
     },
   };
 }
@@ -1539,7 +1555,7 @@ function renderChannelCard(ch) {
       btnMute.textContent = '🔇 Mute';
     } else {
       btnPreview.textContent = '◼ Stop';
-      wfHandle = attachWaterfall(wfWrap, ch.label, getChannelFreqs());
+      wfHandle = attachWaterfall(wfWrap, ch.label, getChannelFreqs(), ch.instance && ch.instance.freq_hz);
       btnMute.style.display = '';
     }
   });
