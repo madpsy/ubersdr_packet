@@ -1370,3 +1370,21 @@ body.mqtt-enabled .mqtt-prefix-row {
   line-height: 1.5;
 }
 .snrd-tooltip.hidden { display: none; }
+
+/* ── Mobile: truncate long frame payloads, tap to expand ────────────────── */
+@media (max-width: 768px) {
+  .frame-payload {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    word-break: normal;
+    cursor: pointer;
+  }
+  .frame-row.expanded .frame-payload {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    word-break: break-all;
+    cursor: default;
+  }
+}
