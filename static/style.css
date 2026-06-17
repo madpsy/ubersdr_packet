@@ -1373,14 +1373,31 @@ body.mqtt-enabled .mqtt-prefix-row {
 
 /* ── Mobile: truncate long frame payloads, tap to expand ────────────────── */
 @media (max-width: 768px) {
+  .frame-row {
+    flex-wrap: nowrap;
+    align-items: center;
+  }
+  .frame-path {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+    flex-shrink: 1;
+  }
   .frame-payload {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     word-break: normal;
     cursor: pointer;
+    min-width: 0;
+    flex-shrink: 1;
+  }
+  .frame-row.expanded {
+    flex-wrap: wrap;
+    align-items: baseline;
   }
   .frame-row.expanded .frame-payload {
+    flex-basis: 100%;
     white-space: normal;
     overflow: visible;
     text-overflow: clip;
