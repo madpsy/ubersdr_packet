@@ -672,7 +672,39 @@ body.mqtt-enabled .mqtt-prefix-row {
   gap: 8px;
   padding: 6px 12px;
   border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
 }
+.monitor-ch-select {
+  background: var(--bg3);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 3px 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.monitor-search-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 2px 6px;
+  flex: 1;
+  min-width: 120px;
+  max-width: 280px;
+}
+.monitor-search-input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-size: 12px;
+  width: 100%;
+  min-width: 0;
+}
+.monitor-search-input::placeholder { color: var(--text-dim); }
 .monitor-list {
   min-height: 120px;
   max-height: calc(100vh - 320px);

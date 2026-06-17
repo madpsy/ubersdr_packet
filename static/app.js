@@ -1386,6 +1386,7 @@ function getState(id) {
       dcd:           [false, false, false, false],
       dcdTimers:     [null, null, null, null],
       filter:        { type: 'all', smCh: 'all', from: '', to: '', search: '', maxFrames: 10 },
+      monitorFilter: { smCh: 'all', search: '' },
       lastFrameTime: null,
       lastCallsign:  null,
       agoTimer:      null,
@@ -1817,41 +1818,108 @@ function renderChannelCard(ch) {
 
   // ── Monitor pane ──
   const monitorToolbar = el('div', 'monitor-toolbar');
+
+  // Channel filter dropdown
+  const monSelCh = document.createElement('select');
+  monSelCh.className = 'monitor-ch-select';
+  monSelCh.title = 'Filter by channel';
+  [['all', 'All'], ...CH_NAMES.map((n, i) => [String(i), n])].forEach(([v, t]) => {
+    const o = document.createElement('option'); o.value = v; o.textContent = t;
+    monSelCh.appendChild(o);
+  });
+  monSelCh.addEventListener('change', () => {
+    state.monitorFilter.smCh = monSelCh.value;
+    applyMonitorFilter();
+  });
+
+  // Payload search input
+  const monSearchWrap = el('div', 'monitor-search-wrap');
+  const monSearchIcon = el('span', 'search-icon', '🔍');
+  const monSearchInput = document.createElement('input');
+  monSearchInput.type = 'text';
+  monSearchInput.className = 'monitor-search-input';
+  monSearchInput.placeholder = 'Search payload…';
+  monSearchInput.autocomplete = 'off';
+  monSearchInput.spellcheck = false;
+  monSearchInput.addEventListener('input', () => {
+    state.monitorFilter.search = monSearchInput.value.trim().toLowerCase();
+    applyMonitorFilter();
+  });
+  const monSearchClear = el('button', 'btn-search-clear', '✕');
+  monSearchClear.title = 'Clear search';
+  monSearchClear.addEventListener('click', () => {
+    state.monitorFilter.search = '';
+    monSearchInput.value = '';
+    applyMonitorFilter();
+  });
+  monSearchWrap.appendChild(monSearchIcon);
+  monSearchWrap.appendChild(monSearchInput);
+  monSearchWrap.appendChild(monSearchClear);
+
   const btnMonClear = el('button', 'btn btn-secondary btn-sm', 'Clear');
   btnMonClear.addEventListener('click', () => {
+    monitorLines = 0;
+    monitorBuf = [];
     monitorList.innerHTML = '';
-    state.monitor = [];
   });
+
+  monitorToolbar.appendChild(el('label', 'text-dim', 'Ch:'));
+  monitorToolbar.appendChild(monSelCh);
+  monitorToolbar.appendChild(monSearchWrap);
   monitorToolbar.appendChild(btnMonClear);
   monitorPane.appendChild(monitorToolbar);
 
   const monitorList = el('div', 'monitor-list');
   monitorPane.appendChild(monitorList);
 
+  // Ring buffer of raw monitor entries for re-filtering
+  let monitorBuf = [];
   let monitorLines = 0;
-  function appendMonitor(smCh, isTX, text) {
-    const timeStr = new Date().toTimeString().slice(0, 8);
+
+  function applyMonitorFilter() {
+    const f = state.monitorFilter;
+    const filtered = monitorBuf.filter(e => {
+      if (f.smCh !== 'all' && String(e.smCh) !== f.smCh) return false;
+      if (f.search && !e.text.toLowerCase().includes(f.search)) return false;
+      return true;
+    });
+    const atBottom = monitorList.scrollHeight - monitorList.scrollTop - monitorList.clientHeight < 40;
+    monitorList.innerHTML = '';
+    filtered.forEach(e => monitorList.appendChild(buildMonitorLine(e)));
+    if (atBottom) monitorList.scrollTop = monitorList.scrollHeight;
+  }
+
+  function buildMonitorLine(e) {
     const line = document.createElement('div');
-    line.className = 'monitor-line ' + (isTX ? 'tx' : 'rx');
+    line.className = 'monitor-line ' + (e.isTX ? 'tx' : 'rx');
+    line.appendChild(el('span', 'monitor-time', e.timeStr));
+    line.appendChild(el('span', `monitor-ch-badge monitor-ch-badge-${e.smCh}`, CH_NAMES[e.smCh] || String(e.smCh)));
+    line.appendChild(el('span', 'monitor-dir', e.isTX ? 'TX' : 'RX'));
+    line.appendChild(el('span', 'monitor-text', e.text));
+    return line;
+  }
 
-    const timeEl = el('span', 'monitor-time', timeStr);
-    const badge  = el('span', `monitor-ch-badge monitor-ch-badge-${smCh}`, CH_NAMES[smCh] || String(smCh));
-    const dirEl  = el('span', 'monitor-dir', isTX ? 'TX' : 'RX');
-    const textEl = el('span', 'monitor-text', text);
+  function appendMonitor(smCh, isTX, text) {
+    const entry = { smCh, isTX, text, timeStr: new Date().toTimeString().slice(0, 8) };
+    monitorBuf.push(entry);
+    if (monitorBuf.length > MAX_MONITOR) monitorBuf.shift();
 
-    line.appendChild(timeEl);
-    line.appendChild(badge);
-    line.appendChild(dirEl);
-    line.appendChild(textEl);
-    const monitorAtBottom = monitorList.scrollHeight - monitorList.scrollTop - monitorList.clientHeight < 40;
+    // Only add to DOM if it passes the current filter
+    const f = state.monitorFilter;
+    const passes = (f.smCh === 'all' || String(smCh) === f.smCh) &&
+                   (!f.search || text.toLowerCase().includes(f.search));
+    if (!passes) return;
+
+    const atBottom = monitorList.scrollHeight - monitorList.scrollTop - monitorList.clientHeight < 40;
+    const line = buildMonitorLine(entry);
     monitorList.appendChild(line);
     monitorLines++;
 
-    while (monitorLines > MAX_MONITOR) {
+    // Trim visible lines to MAX_MONITOR
+    while (monitorList.children.length > MAX_MONITOR) {
       monitorList.removeChild(monitorList.firstChild);
-      monitorLines--;
     }
-    if (monitorAtBottom) monitorList.scrollTop = monitorList.scrollHeight;
+    if (atBottom) monitorList.scrollTop = monitorList.scrollHeight;
   }
 
   // ── Log pane ──
