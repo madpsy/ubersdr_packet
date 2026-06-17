@@ -594,7 +594,7 @@ const DEFAULT_MODEM_CHANNELS = [
 // Modem channel config widget
 // ---------------------------------------------------------------------------
 
-function buildModemChannelCard(idx, cfg) {
+function buildModemChannelCard(idx, cfg, dialFreqHz) {
   cfg = cfg || DEFAULT_MODEM_CHANNELS[idx];
 
   const card = el('div', 'modem-ch-card');
@@ -618,10 +618,11 @@ function buildModemChannelCard(idx, cfg) {
     params.classList.toggle('disabled', !chk.checked);
   });
 
-  function row(labelText, inputEl) {
+  function row(labelText, inputEl, hintEl) {
     const r = el('div', 'param-row');
     r.appendChild(el('label', '', labelText));
     r.appendChild(inputEl);
+    if (hintEl) r.appendChild(hintEl);
     params.appendChild(r);
   }
 
@@ -638,7 +639,28 @@ function buildModemChannelCard(idx, cfg) {
   inpFreq.type = 'number';
   inpFreq.value = cfg.freq ?? 850;
   inpFreq.min = 100; inpFreq.max = 24000;
-  row('Centre freq (Hz)', inpFreq);
+
+  // RF frequency hint — shown when a dial frequency is known
+  const rfHint = el('span', 'modem-rf-hint');
+  function updateRfHint(dial) {
+    const audioHz = parseFloat(inpFreq.value) || 0;
+    if (!dial || dial <= 0 || !audioHz) { rfHint.textContent = ''; return; }
+    const rfHz  = dial + audioHz;
+    const rfKHz = rfHz / 1000;
+    rfHint.textContent = rfKHz >= 1000
+      ? (rfHz / 1e6).toFixed(6) + ' MHz'
+      : rfKHz.toFixed(3) + ' kHz';
+  }
+  updateRfHint(dialFreqHz);
+  inpFreq.addEventListener('input', () => updateRfHint(dialFreqHz));
+
+  row('Centre freq (Hz)', inpFreq, rfHint);
+
+  // Allow the config pane to push a new dial freq when freqInput changes
+  card._refreshDialFreq = (hz) => {
+    dialFreqHz = hz;
+    updateRfHint(hz);
+  };
 
   const selRcvr = document.createElement('select');
   for (let i = 0; i <= 8; i++) {
@@ -699,6 +721,16 @@ function initAddPanel() {
 
   for (let i = 0; i < 4; i++) grid.appendChild(buildModemChannelCard(i, null));
 
+  // Helper: push the current add-freq value into all modem-channel RF hints
+  const addFreqEl = document.getElementById('add-freq');
+  function refreshAddPanelRfHints() {
+    const hz = parseInt(addFreqEl.value) || 0;
+    grid.querySelectorAll('.modem-ch-card').forEach(c => {
+      if (c._refreshDialFreq) c._refreshDialFreq(hz);
+    });
+  }
+  addFreqEl.addEventListener('input', refreshAddPanelRfHints);
+
   // Frequency preset dropdown — populates freq + mode fields
   // Split MQTT topic field: read-only prefix badge + editable suffix input.
   // The badge shows the global prefix from the server config (MQTT_TOPIC_PREFIX env,
@@ -711,14 +743,14 @@ function initAddPanel() {
   const syncMqttSuffix = () => {
     if (!mqttSuffixEl || mqttSuffixManual) return;
     const nameVal = (document.getElementById('add-name').value || '').trim();
-    const freqVal = document.getElementById('add-freq').value || '';
+    const freqVal = addFreqEl.value || '';
     const modeVal = (document.getElementById('add-mode') || {}).value || '';
     mqttSuffixEl.value = nameVal || (freqVal && modeVal ? freqVal + '_' + modeVal : freqVal);
   };
   if (mqttSuffixEl) {
     mqttSuffixEl.addEventListener('input', () => { mqttSuffixManual = true; });
     document.getElementById('add-name').addEventListener('input', syncMqttSuffix);
-    document.getElementById('add-freq').addEventListener('input', syncMqttSuffix);
+    addFreqEl.addEventListener('input', syncMqttSuffix);
     const modeEl = document.getElementById('add-mode');
     if (modeEl) modeEl.addEventListener('change', syncMqttSuffix);
   }
@@ -729,12 +761,13 @@ function initAddPanel() {
     const applyPreset = (val) => {
       if (!val) return;
       const [freqStr, mode] = val.split(',');
-      document.getElementById('add-freq').value = freqStr;
+      addFreqEl.value = freqStr;
       const modeEl = document.getElementById('add-mode');
       if (modeEl) modeEl.value = mode;
       lastVal = val;
       // Programmatic .value= doesn't fire input/change events, so sync manually
       syncMqttSuffix();
+      refreshAddPanelRfHints();
     };
     presetSel.addEventListener('change', e => applyPreset(e.target.value));
     // Allow re-clicking the same option to re-apply
@@ -2029,7 +2062,16 @@ function renderChannelCard(ch) {
 
   const smCfg = ch.modem_config || {};
   const smChannels = smCfg.channels || [{}, {}, {}, {}];
-  for (let i = 0; i < 4; i++) cfgGrid.appendChild(buildModemChannelCard(i, smChannels[i]));
+  const initDialHz = (ch.instance && ch.instance.freq_hz) || 0;
+  for (let i = 0; i < 4; i++) cfgGrid.appendChild(buildModemChannelCard(i, smChannels[i], initDialHz));
+
+  // When the user edits the dial frequency, refresh RF hints on all modem cards
+  freqInput.addEventListener('input', () => {
+    const hz = parseInt(freqInput.value) || 0;
+    cfgGrid.querySelectorAll('.modem-ch-card').forEach(c => {
+      if (c._refreshDialFreq) c._refreshDialFreq(hz);
+    });
+  });
 
   // MQTT topic row — always rendered; CSS hides it unless body.mqtt-enabled.
   // Split into read-only prefix badge + editable suffix so the full topic path
