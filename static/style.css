@@ -1376,6 +1376,7 @@ body.mqtt-enabled .mqtt-prefix-row {
   .frame-row {
     flex-wrap: nowrap;
     align-items: center;
+    cursor: pointer;
   }
   .frame-path {
     overflow: hidden;
@@ -1388,13 +1389,13 @@ body.mqtt-enabled .mqtt-prefix-row {
     overflow: hidden;
     text-overflow: ellipsis;
     word-break: normal;
-    cursor: pointer;
     min-width: 0;
     flex-shrink: 1;
   }
   .frame-row.expanded {
     flex-wrap: wrap;
     align-items: baseline;
+    cursor: default;
   }
   .frame-row.expanded .frame-payload {
     flex-basis: 100%;
@@ -1402,6 +1403,5 @@ body.mqtt-enabled .mqtt-prefix-row {
     overflow: visible;
     text-overflow: clip;
     word-break: break-all;
-    cursor: default;
   }
 }

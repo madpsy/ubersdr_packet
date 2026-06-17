@@ -2125,7 +2125,7 @@ function renderChannelCard(ch) {
       if (last < infoText.length) payloadEl.appendChild(document.createTextNode(infoText.slice(last)));
     }
     row.appendChild(payloadEl);
-    payloadEl.addEventListener('click', () => row.classList.toggle('expanded'));
+    row.addEventListener('click', () => row.classList.toggle('expanded'));
 
     // SNR badge — only shown when a valid SNR value was attached to the frame
     if (!isNaN(entry.snr)) {
