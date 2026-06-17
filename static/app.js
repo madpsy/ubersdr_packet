@@ -621,8 +621,14 @@ function buildModemChannelCard(idx, cfg, dialFreqHz) {
   function row(labelText, inputEl, hintEl) {
     const r = el('div', 'param-row');
     r.appendChild(el('label', '', labelText));
-    r.appendChild(inputEl);
-    if (hintEl) r.appendChild(hintEl);
+    if (hintEl) {
+      const wrap = el('div', 'param-input-wrap');
+      wrap.appendChild(inputEl);
+      wrap.appendChild(hintEl);
+      r.appendChild(wrap);
+    } else {
+      r.appendChild(inputEl);
+    }
     params.appendChild(r);
   }
 

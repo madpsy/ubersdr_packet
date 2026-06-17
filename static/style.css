@@ -219,12 +219,23 @@ input.form-input:focus, select.form-select:focus {
   color: var(--text-dim);
 }
 .param-row label { flex: 1; }
+.param-input-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+.param-input-wrap input,
+.param-input-wrap select {
+  width: 100%;
+}
 .modem-rf-hint {
   font-size: 11px;
   color: var(--text-dim);
   white-space: nowrap;
-  flex-shrink: 0;
-  min-width: 0;
+  text-align: right;
+  line-height: 1.2;
+  min-height: 1em;
 }
 .param-row select, .param-row input {
   background: var(--bg2);
