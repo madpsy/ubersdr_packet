@@ -859,6 +859,57 @@ function wfColorB(v) {
   return 0;
 }
 
+function drawWaterfallFooter(ftrCtx, dialFreqHz) {
+  const w = ftrCtx.canvas.width;
+  const h = ftrCtx.canvas.height;
+
+  ftrCtx.fillStyle = '#1a1a1a';
+  ftrCtx.fillRect(0, 0, w, h);
+
+  if (!dialFreqHz || dialFreqHz <= 0) return;
+
+  ftrCtx.strokeStyle = '#ccc';
+  ftrCtx.fillStyle   = '#fff';
+  ftrCtx.font        = '9px monospace';
+  ftrCtx.textAlign   = 'center';
+  ftrCtx.lineWidth   = 1;
+
+  // Major ticks every 500 Hz audio → label as RF freq
+  for (let f = 0; f <= WF_MAX_FREQ; f += 500) {
+    const x    = Math.round((f / WF_MAX_FREQ) * w);
+    const rfHz = dialFreqHz + f;
+    ftrCtx.strokeStyle = '#ccc';
+    ftrCtx.beginPath();
+    ftrCtx.moveTo(x, 0); ftrCtx.lineTo(x, 6);
+    ftrCtx.stroke();
+    if (f > 0 && f < WF_MAX_FREQ) {
+      const rfKHz = rfHz / 1000;
+      const lbl = rfKHz >= 1000
+        ? (rfHz / 1e6).toFixed(3)
+        : rfKHz.toFixed(2);
+      ftrCtx.fillStyle = '#ccc';
+      ftrCtx.fillText(lbl, x, 16);
+    }
+  }
+  // Minor ticks every 100 Hz
+  ftrCtx.strokeStyle = '#555';
+  for (let f = 100; f < WF_MAX_FREQ; f += 100) {
+    if (f % 500 === 0) continue;
+    const x = Math.round((f / WF_MAX_FREQ) * w);
+    ftrCtx.beginPath();
+    ftrCtx.moveTo(x, 0); ftrCtx.lineTo(x, 3);
+    ftrCtx.stroke();
+  }
+
+  // Unit label at far right
+  const rfMaxHz  = dialFreqHz + WF_MAX_FREQ;
+  const unitLbl  = rfMaxHz >= 1e6 ? 'MHz' : 'kHz';
+  ftrCtx.fillStyle  = '#666';
+  ftrCtx.font       = '8px monospace';
+  ftrCtx.textAlign  = 'right';
+  ftrCtx.fillText(unitLbl, w - 2, 16);
+}
+
 function drawWaterfallHeader(hdrCtx, channelFreqs) {
   const w = hdrCtx.canvas.width;
   const h = hdrCtx.canvas.height;
@@ -1114,26 +1165,33 @@ function attachWaterfall(wfWrap, label, channelFreqs, dialFreqHz) {
   ovlCanvas.className = 'wf-ovl-canvas';
   ovlCanvas.height = WF_HEIGHT;
 
+  const ftrCanvas = document.createElement('canvas');
+  ftrCanvas.className = 'wf-ftr-canvas';
+  ftrCanvas.height = WF_HDR_H;
+
   wfBody.appendChild(hdrCanvas);
   const wfStack = el('div', 'wf-stack');
   wfStack.appendChild(wfCanvas);
   wfStack.appendChild(ovlCanvas);
   wfBody.appendChild(wfStack);
+  wfBody.appendChild(ftrCanvas);
   wfWrap.appendChild(wfBody);
 
   // Size canvases to container width
   function resize() {
     const w = Math.max(wfBody.getBoundingClientRect().width || 400, 200);
-    [hdrCanvas, wfCanvas, ovlCanvas].forEach(c => { c.width = w; });
+    [hdrCanvas, wfCanvas, ovlCanvas, ftrCanvas].forEach(c => { c.width = w; });
     hdrCtx.fillStyle = '#000';
     hdrCtx.fillRect(0, 0, w, WF_HEIGHT);
     drawWaterfallHeader(hdrCtx, channelFreqs);
     drawWaterfallOverlay(ovlCtx, channelFreqs, null, txEvents, wfLineCount, dialFreqHz);
+    drawWaterfallFooter(ftrCtx, dialFreqHz);
   }
 
   const hdrCtx = hdrCanvas.getContext('2d');
   const wfCtx  = wfCanvas.getContext('2d');
   const ovlCtx = ovlCanvas.getContext('2d');
+  const ftrCtx = ftrCanvas.getContext('2d');
 
   let mouseX = null;
   ovlCanvas.addEventListener('mousemove', e => {
@@ -1384,6 +1442,7 @@ function attachWaterfall(wfWrap, label, channelFreqs, dialFreqHz) {
       channelFreqs = newChannelFreqs;
       drawWaterfallHeader(hdrCtx, channelFreqs);
       drawWaterfallOverlay(ovlCtx, channelFreqs, mouseX, txEvents, wfLineCount, dialFreqHz);
+      drawWaterfallFooter(ftrCtx, dialFreqHz);
     },
     // Called by renderChannelCard when a decoded frame arrives.
     // entry: { from, smCh } — the decoded frame entry.

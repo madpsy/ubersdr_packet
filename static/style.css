@@ -920,7 +920,8 @@ body.mqtt-enabled .mqtt-prefix-row {
   overflow: hidden;
   background: #000;
 }
-.wf-hdr-canvas {
+.wf-hdr-canvas,
+.wf-ftr-canvas {
   display: block;
   width: 100%;
   background: #1a1a1a;
