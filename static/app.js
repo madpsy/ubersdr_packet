@@ -884,9 +884,10 @@ function drawWaterfallFooter(ftrCtx, dialFreqHz) {
     ftrCtx.stroke();
     if (f > 0 && f < WF_MAX_FREQ) {
       const rfKHz = rfHz / 1000;
+      // Always show enough precision to resolve 1 Hz
       const lbl = rfKHz >= 1000
-        ? (rfHz / 1e6).toFixed(3)
-        : rfKHz.toFixed(2);
+        ? (rfHz / 1e6).toFixed(6)   // e.g. 7.049950 MHz
+        : rfKHz.toFixed(3);          // e.g. 1500.000 kHz
       ftrCtx.fillStyle = '#ccc';
       ftrCtx.fillText(lbl, x, 16);
     }
