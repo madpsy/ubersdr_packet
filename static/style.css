@@ -1066,6 +1066,25 @@ body.mqtt-enabled .mqtt-prefix-row {
   display: block;
 }
 
+.stm-tooltip {
+  position: absolute;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 5px 10px;
+  font-size: 0.8em;
+  color: var(--text);
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 10;
+  line-height: 1.6;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+}
+.stm-tooltip.hidden { display: none; }
+
 /* ── SNR History modal ───────────────────────────────────────────────────── */
 .snrh-overlay {
   position: fixed;

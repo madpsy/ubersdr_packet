@@ -31,6 +31,9 @@ window.StatsModal = (() => {
   const GRID   = '#2a3050';
   const TEXT   = '#c8d0e0';
 
+  // Box padding (must match .stm-chart-box padding in CSS: 12px)
+  const BOX_PAD = 12;
+
   // ── State ──────────────────────────────────────────────────────────────────
   let channelLabel = '';
   let selSender    = '';   // '' = all senders
@@ -39,7 +42,12 @@ window.StatsModal = (() => {
 
   // ── DOM refs ───────────────────────────────────────────────────────────────
   let overlay, modal, titleEl, closeBtn, statusEl, selSnd, senderLabel,
-      canvasFirst, canvasDaily, canvasHourly, canvasTypes, canvasDest;
+      canvasFirst, canvasDaily, canvasHourly, canvasTypes, canvasDest,
+      tooltip;
+
+  // ── Hit regions per canvas ─────────────────────────────────────────────────
+  // Each canvas gets a _hits array: [{ x, y, w, h, label, value, color }]
+  // For line charts: [{ cx, cy, r, label, value }]
 
   // ── Build DOM (once) ───────────────────────────────────────────────────────
   function buildDOM() {
@@ -97,6 +105,11 @@ window.StatsModal = (() => {
     canvasTypes  = makeChartBox(grid, 'Frame Types');
     canvasDest   = makeChartBox(grid, 'Top Destinations');
 
+    // Shared floating tooltip
+    tooltip = document.createElement('div');
+    tooltip.className = 'stm-tooltip hidden';
+    modal.appendChild(tooltip);
+
     modal.appendChild(hdr);
     modal.appendChild(controls);
     modal.appendChild(statusEl);
@@ -123,12 +136,104 @@ window.StatsModal = (() => {
     lbl.textContent = title;
     const canvas = document.createElement('canvas');
     canvas.className = 'stm-canvas';
+    canvas._hits = [];
+    canvas._hitType = 'bar'; // 'bar' | 'line'
     box.appendChild(lbl);
     box.appendChild(canvas);
     parent.appendChild(box);
     // Store title element for dynamic updates
     canvas._titleEl = lbl;
+
+    // Tooltip mouse events
+    canvas.addEventListener('mousemove', e => onCanvasMouseMove(canvas, e));
+    canvas.addEventListener('mouseleave', () => hideTooltip());
+
     return canvas;
+  }
+
+  // ── Tooltip helpers ────────────────────────────────────────────────────────
+  function showTooltip(canvas, label, value, color, clientX, clientY) {
+    tooltip.innerHTML = '';
+
+    if (color) {
+      const dot = document.createElement('span');
+      dot.style.cssText = `display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:5px;vertical-align:middle;flex-shrink:0;`;
+      tooltip.appendChild(dot);
+    }
+
+    const lbl = document.createElement('span');
+    lbl.style.cssText = 'color:#c8d0e0;font-weight:600;';
+    lbl.textContent = label;
+    tooltip.appendChild(lbl);
+
+    const sep = document.createElement('span');
+    sep.style.cssText = 'color:#7a88aa;margin:0 4px;';
+    sep.textContent = '·';
+    tooltip.appendChild(sep);
+
+    const val = document.createElement('span');
+    val.style.cssText = 'color:#4a9eff;font-weight:700;';
+    val.textContent = Number(value).toLocaleString();
+    tooltip.appendChild(val);
+
+    tooltip.classList.remove('hidden');
+
+    // Position relative to modal
+    const modalRect = modal.getBoundingClientRect();
+    let tx = clientX - modalRect.left + 12;
+    let ty = clientY - modalRect.top  - 36;
+
+    // Clamp so tooltip stays inside modal
+    const ttW = tooltip.offsetWidth  || 160;
+    const ttH = tooltip.offsetHeight || 32;
+    if (tx + ttW > modalRect.width  - 8) tx = clientX - modalRect.left - ttW - 12;
+    if (ty < 4) ty = clientY - modalRect.top + 12;
+    if (ty + ttH > modalRect.height - 8) ty = modalRect.height - ttH - 8;
+
+    tooltip.style.left = tx + 'px';
+    tooltip.style.top  = ty + 'px';
+  }
+
+  function hideTooltip() {
+    tooltip.classList.add('hidden');
+  }
+
+  function onCanvasMouseMove(canvas, e) {
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+
+    if (canvas._hitType === 'line') {
+      // Find nearest point within 18px
+      let best = null, bestDist = 18;
+      for (const h of canvas._hits) {
+        const d = Math.hypot(mx - h.cx, my - h.cy);
+        if (d < bestDist) { bestDist = d; best = h; }
+      }
+      if (best) {
+        canvas.style.cursor = 'crosshair';
+        showTooltip(canvas, best.label, best.value, ACCENT, e.clientX, e.clientY);
+      } else {
+        canvas.style.cursor = '';
+        hideTooltip();
+      }
+    } else {
+      // Bar hit test
+      let hit = null;
+      for (const h of canvas._hits) {
+        if (mx >= h.x && mx <= h.x + h.w && my >= h.y && my <= h.y + h.h) {
+          hit = h;
+          break;
+        }
+      }
+      if (hit) {
+        canvas.style.cursor = 'default';
+        showTooltip(canvas, hit.label, hit.value, hit.color, e.clientX, e.clientY);
+      } else {
+        canvas.style.cursor = '';
+        hideTooltip();
+      }
+    }
   }
 
   // ── Data fetching ──────────────────────────────────────────────────────────
@@ -221,7 +326,8 @@ window.StatsModal = (() => {
 
   function setupCanvas(canvas) {
     const box = canvas.parentElement;
-    const W = box.clientWidth  || 400;
+    // Use content width: subtract left+right padding from the box
+    const W = Math.max((box.clientWidth || 400) - BOX_PAD * 2, 100);
     const H = canvas.clientHeight || 200;
     const dpr = window.devicePixelRatio || 1;
     canvas.width  = W * dpr;
@@ -232,11 +338,14 @@ window.StatsModal = (() => {
     ctx.scale(dpr, dpr);
     ctx.fillStyle = BG;
     ctx.fillRect(0, 0, W, H);
+    // Clear hit regions
+    canvas._hits = [];
     return { ctx, W, H };
   }
 
   function drawEmpty(canvas, msg) {
     const { ctx, W, H } = setupCanvas(canvas);
+    canvas._hits = [];
     ctx.fillStyle = DIM;
     ctx.font = '13px sans-serif';
     ctx.textAlign = 'center';
@@ -248,6 +357,7 @@ window.StatsModal = (() => {
   function drawHBar(canvas, labels, values, colors, opts = {}) {
     const PAD = { top: 8, right: 60, bottom: 8, left: opts.leftPad || 90 };
     const { ctx, W, H } = setupCanvas(canvas);
+    canvas._hitType = 'bar';
     const n = labels.length;
     if (!n) { drawEmpty(canvas, 'No data'); return; }
 
@@ -276,6 +386,13 @@ window.StatsModal = (() => {
       ctx.fillStyle = DIM;
       ctx.textAlign = 'left';
       ctx.fillText(values[i].toLocaleString(), PAD.left + bw + 5, y + barH / 2);
+
+      // Hit region: full row width for easier hover
+      canvas._hits.push({
+        x: PAD.left, y,
+        w: gW, h: barH,
+        label: lbl, value: values[i], color: col
+      });
     });
   }
 
@@ -283,6 +400,7 @@ window.StatsModal = (() => {
   function drawVBar(canvas, labels, values, colors, opts = {}) {
     const PAD = { top: 20, right: 8, bottom: opts.bottomPad || 36, left: 44 };
     const { ctx, W, H } = setupCanvas(canvas);
+    canvas._hitType = 'bar';
     const n = labels.length;
     if (!n) { drawEmpty(canvas, 'No data'); return; }
 
@@ -325,6 +443,13 @@ window.StatsModal = (() => {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
       ctx.fillText(labels[i], PAD.left + i * barW + barW / 2, PAD.top + gH + 4);
+
+      // Hit region: bar column from top of chart area down to baseline
+      canvas._hits.push({
+        x, y,
+        w: Math.max(bw, 1), h: Math.max(bh, 1),
+        label: labels[i], value: v, color: col
+      });
     });
   }
 
@@ -332,6 +457,7 @@ window.StatsModal = (() => {
   function drawLine(canvas, labels, values, color) {
     const PAD = { top: 20, right: 12, bottom: 40, left: 44 };
     const { ctx, W, H } = setupCanvas(canvas);
+    canvas._hitType = 'line';
     const n = labels.length;
     if (!n) { drawEmpty(canvas, 'No data'); return; }
 
@@ -385,6 +511,9 @@ window.StatsModal = (() => {
       ctx.arc(x, y, 3, 0, Math.PI * 2);
       ctx.fillStyle = color || ACCENT;
       ctx.fill();
+
+      // Hit region for line points
+      canvas._hits.push({ cx: x, cy: y, r: 10, label: labels[i], value: v });
     });
 
     const step = Math.max(1, Math.ceil(n / 8));
@@ -447,14 +576,18 @@ window.StatsModal = (() => {
       if (!e.frames_per_hour) return;
       e.frames_per_hour.forEach((cnt, h) => { totals[h] += cnt; });
     });
-    const labels = totals.map((_, h) => String(h).padStart(2, '0'));
+    const labels = totals.map((_, h) => String(h).padStart(2, '0') + ':00');
     const colors = totals.map((_, h) => {
       if (h >= 6  && h < 12) return '#e0b84a';
       if (h >= 12 && h < 18) return '#3ecf6e';
       if (h >= 18 && h < 22) return '#4a9eff';
       return '#4a5580';
     });
-    drawVBar(canvasHourly, labels, totals, colors, { bottomPad: 28 });
+    // Short labels for axis, full labels for tooltip
+    const axisLabels = totals.map((_, h) => String(h).padStart(2, '0'));
+    drawVBar(canvasHourly, axisLabels, totals, colors, { bottomPad: 28 });
+    // Patch hit labels to include :00 for clarity
+    canvasHourly._hits.forEach((h, i) => { h.label = labels[i]; });
   }
 
   function drawFrameTypes(entries) {
@@ -505,6 +638,7 @@ window.StatsModal = (() => {
   function close() {
     if (overlay) overlay.classList.add('hidden');
     document.body.style.overflow = '';
+    hideTooltip();
   }
 
   return { open, close };
