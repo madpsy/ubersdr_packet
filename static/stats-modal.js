@@ -105,17 +105,17 @@ window.StatsModal = (() => {
     canvasTypes  = makeChartBox(grid, 'Frame Types');
     canvasDest   = makeChartBox(grid, 'Top Destinations');
 
-    // Shared floating tooltip
-    tooltip = document.createElement('div');
-    tooltip.className = 'stm-tooltip hidden';
-    modal.appendChild(tooltip);
-
     modal.appendChild(hdr);
     modal.appendChild(controls);
     modal.appendChild(statusEl);
     modal.appendChild(grid);
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
+
+    // Shared floating tooltip — lives on body so fixed positioning works cleanly
+    tooltip = document.createElement('div');
+    tooltip.className = 'stm-tooltip hidden';
+    document.body.appendChild(tooltip);
 
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape' && !overlay.classList.contains('hidden')) close();
@@ -178,17 +178,19 @@ window.StatsModal = (() => {
 
     tooltip.classList.remove('hidden');
 
-    // Position relative to modal
-    const modalRect = modal.getBoundingClientRect();
-    let tx = clientX - modalRect.left + 12;
-    let ty = clientY - modalRect.top  - 36;
-
-    // Clamp so tooltip stays inside modal
+    // Use fixed positioning relative to viewport — no offset math needed
     const ttW = tooltip.offsetWidth  || 160;
     const ttH = tooltip.offsetHeight || 32;
-    if (tx + ttW > modalRect.width  - 8) tx = clientX - modalRect.left - ttW - 12;
-    if (ty < 4) ty = clientY - modalRect.top + 12;
-    if (ty + ttH > modalRect.height - 8) ty = modalRect.height - ttH - 8;
+    const vw  = window.innerWidth;
+    const vh  = window.innerHeight;
+
+    let tx = clientX + 14;
+    let ty = clientY - ttH - 8;
+
+    // Flip horizontally if too close to right edge
+    if (tx + ttW > vw - 8) tx = clientX - ttW - 14;
+    // Flip vertically if too close to top
+    if (ty < 8) ty = clientY + 14;
 
     tooltip.style.left = tx + 'px';
     tooltip.style.top  = ty + 'px';

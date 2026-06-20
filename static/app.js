@@ -157,6 +157,12 @@ function renderAuthBar() {
   document.body.classList.toggle('pw-configured', !!state.passwordConfigured);
   document.body.classList.toggle('is-authed',     !!state.authed || !state.passwordConfigured);
 
+  // CSS pointer-events alone cannot block checkbox toggling via their <label>.
+  // Explicitly disable/enable all modem channel enable-checkboxes.
+  const locked = !!state.passwordConfigured && !state.authed;
+  document.querySelectorAll('.config-pane .modem-ch-header input[type=checkbox]')
+    .forEach(cb => { cb.disabled = locked; });
+
   if (!state.passwordConfigured) {
     // No password set — everyone can write
     loginBtn.classList.add('hidden');
@@ -603,6 +609,9 @@ function buildModemChannelCard(idx, cfg, dialFreqHz) {
   const chk = document.createElement('input');
   chk.type = 'checkbox';
   chk.checked = !!cfg.enabled;
+  // Disable immediately if the user is not authenticated
+  chk.disabled = document.body.classList.contains('pw-configured') &&
+                 !document.body.classList.contains('is-authed');
   const uid = `mch-${idx}-${Date.now()}`;
   chk.id = uid;
   const lbl = el('label', '', `Channel ${CH_NAMES[idx]}`);

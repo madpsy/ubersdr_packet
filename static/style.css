@@ -1068,7 +1068,7 @@ body.mqtt-enabled .mqtt-prefix-row {
 }
 
 .stm-tooltip {
-  position: absolute;
+  position: fixed;
   background: var(--bg3);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -1077,7 +1077,7 @@ body.mqtt-enabled .mqtt-prefix-row {
   color: var(--text);
   pointer-events: none;
   white-space: nowrap;
-  z-index: 10;
+  z-index: 600;
   line-height: 1.6;
   display: flex;
   align-items: center;
