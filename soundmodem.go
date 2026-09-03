@@ -127,6 +127,18 @@ type SMConfig struct {
 
 const smSampleRate = 12000 // UberSDR always delivers 12 kHz mono for USB/LSB
 
+// sampleRateMismatch reports whether a stream's sample rate disagrees with the
+// fixed rate buildSMIni configures the soundmodem at.
+//
+// The two are independent: the stream rate arrives in the audio packet header
+// and the modem rate is this constant, so nothing makes them agree
+// automatically. They do agree in practice -- the server's usb/lsb presets are
+// 12 kHz, confirmed against a live receiver -- but a preset change would
+// otherwise show up only as AX.25 that silently stops decoding.
+func sampleRateMismatch(streamRate int) bool {
+	return streamRate > 0 && streamRate != smSampleRate
+}
+
 func defaultSMConfig(_ int) SMConfig {
 	cfg := SMConfig{
 		SampleRate:   smSampleRate,

@@ -58,7 +58,7 @@ import (
 // ---------------------------------------------------------------------------
 
 // snrRingSize is the number of SNR samples kept in the timestamped ring buffer.
-// At ~20 ms per v2 packet, 100 samples ≈ 2 seconds — enough headroom for the
+// At ~20 ms per packet, 100 samples ≈ 2 seconds — enough headroom for the
 // 500 ms lookback window used by takePendingSNR.
 const snrRingSize = 100
 
@@ -67,7 +67,12 @@ const snrRingSize = 100
 // to capture the samples that arrived during the transmission.
 const snrLookback = 500 * time.Millisecond
 
-// snrSample is one timestamped SNR measurement from an UberSDR v2 packet.
+// snrSample is one timestamped SNR measurement from an UberSDR packet header.
+//
+// Since the move to audio protocol v4 this is a true SNR in dB (baseband power
+// minus noise power in the demodulator passband). Before that it was an S/N0 in
+// dB·Hz, roughly 34.7 dB higher on the usual 2950 Hz usb passband; frames
+// stored before the migration are on that older scale.
 type snrSample struct {
 	t   time.Time
 	snr float32

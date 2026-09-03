@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -19,6 +20,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+
+	"github.com/madpsy/ubersdr-packet/internal/pcmv4"
 )
 
 const rcvBufSize = 16 * 1024 * 1024 // 16 MiB SO_RCVBUF
@@ -204,6 +207,69 @@ func bandwidthParams(mode string, bwHz int) (low, high int) {
 	return low, high
 }
 
+// ---------------------------------------------------------------------------
+// SNR scale
+// ---------------------------------------------------------------------------
+//
+// Audio protocol version 3 changed what the header's noise field means: it was
+// radiod's noise DENSITY N0 in dBFS/Hz, and it is now the noise POWER inside
+// the demodulator passband in dBFS.  basebandDBFS - noiseDBFS was therefore an
+// S/N0 in dB·Hz and is now a true SNR, lower by 10·log10(passbandHz).
+//
+// The size of that step is not a constant for this addon, because unlike the
+// other UberSDR clients it CHOOSES its passband: wsURL sends bandwidthLow and
+// bandwidthHigh whenever a channel has bandwidth_hz set, and those come from
+// bandwidthParams above.  So the shift is derived from the same function that
+// builds the request rather than hardcoded, and it differs per mode:
+//
+//	mode  bandwidth_hz   passband        shift
+//	usb   0 (preset)     2950 Hz         34.70 dB
+//	usb   2400           2100 Hz (300..2400)  33.22 dB
+//	lsb   0 (preset)     2950 Hz         34.70 dB
+//	cw    500            500 Hz          26.99 dB
+//	fm    0 (preset)     16000 Hz        42.04 dB
+//
+// This matters for reading history, not for the live figure: version 4 reports
+// a correct SNR whatever the passband, and it is stored as reported. What the
+// shift explains is why values recorded before the migration are ~27-42 dB
+// higher, and -- because the shift moved with the bandwidth -- why those older
+// values are not even comparable across channels of different widths. There is
+// no conversion that would make them so, which is why nothing here attempts one.
+
+// presetPassbandHz is HighEdge - LowEdge for the server's per-mode presets, used
+// when a channel sends no bandwidth parameters. From ubersdr-radiod
+// config/presets.conf.
+var presetPassbandHz = map[string]float64{
+	"usb": 2950, // low +50, high +3k
+	"lsb": 2950, // low -3k, high -50
+	"fm":  16000,
+}
+
+// defaultPresetPassbandHz is used for a mode not in the table. The SSB value is
+// the right guess for this addon, which is an HF AX.25 decoder.
+const defaultPresetPassbandHz = 2950
+
+// passbandHz returns the width of the demodulator passband this channel asks
+// for, in Hz, derived from the same bandwidthParams that builds the request.
+func passbandHz(mode string, bwHz int) float64 {
+	if bwHz > 0 {
+		low, high := bandwidthParams(mode, bwHz)
+		if w := float64(high - low); w > 0 {
+			return w
+		}
+	}
+	if w, ok := presetPassbandHz[strings.ToLower(mode)]; ok {
+		return w
+	}
+	return defaultPresetPassbandHz
+}
+
+// snrScaleShiftDB is how much lower a version >= 3 SNR reads than the version 2
+// figure for the same signal on this channel's passband.
+func snrScaleShiftDB(mode string, bwHz int) float64 {
+	return 10 * math.Log10(passbandHz(mode, bwHz))
+}
+
 func (inst *instance) wsURL() string {
 	u, _ := url.Parse(inst.ubersdrURL)
 	wsScheme := "ws"
@@ -219,7 +285,10 @@ func (inst *instance) wsURL() string {
 	q.Set("frequency", fmt.Sprintf("%d", dialHz))
 	q.Set("mode", inst.audioMode)
 	q.Set("format", "pcm-zstd")
-	q.Set("version", "2")
+	// Audio protocol version 4: the predictive lossless codec and the
+	// variable-length header. The format name is unchanged -- it selects the
+	// PCM stream, and only the version selects how it is framed and coded.
+	q.Set("version", fmt.Sprintf("%d", pcmv4.ProtocolVersion))
 	q.Set("user_session_id", inst.sessionID)
 	if inst.password != "" {
 		q.Set("password", inst.password)
@@ -368,7 +437,7 @@ func (inst *instance) runOnce(ctx context.Context) (reconnect bool) {
 
 		switch msgType {
 		case websocket.BinaryMessage:
-			pkt, err := dec.decode(msg, true)
+			pkt, err := dec.decode(msg)
 			if err != nil {
 				log.Printf("[%s] decode: %v", inst.label, err)
 				continue
@@ -383,6 +452,18 @@ func (inst *instance) runOnce(ctx context.Context) (reconnect bool) {
 				inst.streamSampleRate = pkt.sampleRate
 				inst.streamChannels = pkt.channels
 				inst.streamMu.Unlock()
+
+				// buildSMIni configures the soundmodem at the fixed smSampleRate
+				// rather than at whatever the stream reports, so the two have to
+				// agree or every frame is demodulated at the wrong rate and
+				// nothing decodes -- with no error to say why. The rate now comes
+				// from the version 4 header rather than a fixed offset in a
+				// 37-byte one, so say so out loud if it ever stops matching.
+				if sampleRateMismatch(pkt.sampleRate) {
+					log.Printf("[%s] WARNING: stream is %d Hz but the soundmodem is configured for %d Hz — "+
+						"AX.25 decoding will fail; the server's preset for mode %q has changed",
+						inst.label, pkt.sampleRate, smSampleRate, inst.audioMode)
+				}
 			}
 
 			totalPackets.Add(1)

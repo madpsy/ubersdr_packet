@@ -12,14 +12,36 @@ const BASE = (window.BASE_PATH || '').replace(/\/$/, '');
 // ---------------------------------------------------------------------------
 // Graph constants
 // ---------------------------------------------------------------------------
-const SNR_MIN  = 25;
-const SNR_MAX  = 80;
+// SNR scale (audio protocol v4)
+//
+// Audio protocol version 3 changed the header's noise field from a spectral
+// density in dBFS/Hz to the noise power inside the demodulator passband, so
+// SNR = baseband - noise is now a true SNR rather than an S/N0 in dB·Hz. For
+// the 2950 Hz usb passband this addon normally runs, the same signal reads
+// 10*log10(2950) = 34.7 dB LOWER than it did before the migration.
+//
+// These bounds are therefore refitted. They agree from two directions:
+// shifting the old 25/40/60/80 by 34.7 gives -9.7/5.3/25.3/45.3, and the
+// values measured on m9psy.tunnel.ubersdr.org (12 kHz USB, 1500 packets per
+// frequency) put an idle channel at ~0 dB (7049.45, 10147.3, 14105 kHz all
+// measured p50 -0.75..-0.85, min -3.2) and a strong continuous signal at
+// ~30 dB (p95 35, peak 42). So 5 dB separates idle from signal and 25 dB
+// marks a strong one.
+//
+// Frames received BEFORE the migration are stored on the old scale and read
+// ~27-42 dB higher (the shift moved with the channel bandwidth, so they are
+// not comparable across channels either). Nothing converts them; a chart
+// spanning the migration will show a step.
+const SNR_MIN = -5;   // just below the measured idle-channel level (~0 dB)
+const SNR_MAX = 45;   // just above the strongest signal measured (42 dB)
+const SNR_OK  = 5;    // above idle: a decodable signal
+const SNR_GOOD = 25;   // a strong signal
 const PAD      = { top: 28, right: 10, bottom: 32, left: 46 };
 const CARD_H   = 200; // px — height of each mini-graph card
 
 function snrColor(snr) {
-  if (snr > 60) return '#3ecf6e';
-  if (snr > 40) return '#e0b84a';
+  if (snr > SNR_GOOD) return '#3ecf6e';
+  if (snr > SNR_OK)   return '#e0b84a';
   return '#e05252';
 }
 
@@ -57,9 +79,9 @@ function drawMiniGraph(canvas, frames) {
 
   // Colour bands
   const bands = [
-    { lo: SNR_MIN, hi: 40,      color: 'rgba(224,82,82,0.07)' },
-    { lo: 40,      hi: 60,      color: 'rgba(224,184,74,0.07)' },
-    { lo: 60,      hi: SNR_MAX, color: 'rgba(62,207,110,0.07)' },
+    { lo: SNR_MIN,  hi: SNR_OK,   color: 'rgba(224,82,82,0.07)' },
+    { lo: SNR_OK,   hi: SNR_GOOD, color: 'rgba(224,184,74,0.07)' },
+    { lo: SNR_GOOD, hi: SNR_MAX,  color: 'rgba(62,207,110,0.07)' },
   ];
   bands.forEach(b => {
     const y1 = PAD.top + gH - ((b.hi - SNR_MIN) / (SNR_MAX - SNR_MIN)) * gH;
@@ -75,7 +97,7 @@ function drawMiniGraph(canvas, frames) {
   ctx.font         = '9px monospace';
   ctx.textAlign    = 'right';
   ctx.textBaseline = 'middle';
-  [25, 40, 60, 80].forEach(v => {
+  [SNR_MIN, SNR_OK, SNR_GOOD, SNR_MAX].forEach(v => {
     const y = PAD.top + gH - ((v - SNR_MIN) / (SNR_MAX - SNR_MIN)) * gH;
     ctx.beginPath();
     ctx.moveTo(PAD.left, y);

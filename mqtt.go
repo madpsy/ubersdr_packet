@@ -11,7 +11,7 @@
 //     {
 //     "channel":        "7049450_usb",
 //     "modem_ch":       "A",            // sub-channel letter (A–D)
-//     "snr":            42.3,           // dB, null when unavailable
+//     "snr":            18.4,           // dB, null when unavailable (see note below)
 //     "received_at":    "2024-01-01T…", // RFC3339Nano UTC
 //     "frame":          "<base64>",     // raw AX.25 bytes, base64-encoded
 //     "freq_hz":        7049450,        // dial (VFO) frequency in Hz
@@ -31,7 +31,7 @@
 //     "from":           "G0ABC-9",
 //     "to":             "APRS",
 //     "frame_type":     "aprs",
-//     "snr":            42.3,
+//     "snr":            18.4,
 //     "received_at":    "2024-01-01T…",
 //     "frame":          "<base64>",
 //     "freq_hz":        7049450,
@@ -47,6 +47,14 @@
 //
 // If no broker is configured the mqttClient is nil and all Publish calls are
 // no-ops.
+//
+// THE snr FIELD IS ON A NEW SCALE since the move to audio protocol v4.  It is
+// now a true SNR in dB -- baseband power minus noise power inside the
+// demodulator passband.  It used to be an S/N0 in dB·Hz, which read
+// 10*log10(passbandHz) higher: about 34.7 dB on the usual 2950 Hz usb
+// passband, and more or less on other modes and bandwidths.  A subscriber that
+// thresholds this field needs its numbers moving down by that much; one that
+// stores it should expect a step at the migration, not a gradual drift.
 package main
 
 import (
