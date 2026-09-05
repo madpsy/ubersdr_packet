@@ -76,6 +76,32 @@ const (
 	// identically on both sides, since if it ever does fire the two must agree.
 	predTapLimit = 1 << 24
 
+	// predLeakShiftComplex and predLeakShiftReal are the tap leakage: every
+	// adaptation subtracts |w|/2^shift from each tap before adding the
+	// gradient step.
+	//
+	// Sign-sign LMS has no restoring force -- the update depends only on the
+	// signs of the error and of the history, never on how large a tap already
+	// is -- so on a stream with any persistent structure the taps drift
+	// outwards indefinitely. The server measured its mean |tap| growing
+	// linearly on IQ until it reached the clamp ninety seconds in, by which
+	// point the coded stream came out LARGER than the samples going into it.
+	// The leak is what holds them.
+	//
+	// The two shifts differ because they are different filters on different
+	// signals: the complex stage's taps settle small, and 14 is its measured
+	// optimum, while the four-stage real cascade legitimately reaches 1.2 and
+	// leaking it that hard would throw that away. A tap has to pass 2^shift --
+	// 0.25 in the complex form, 1.0 in the real one -- before it leaks at all,
+	// which takes milliseconds on IQ and about a second on demodulated audio.
+	//
+	// Neither is a tuning choice here. They are what the server does, and a
+	// decoder that leaks differently, or not at all, parts company with it
+	// within that same second and returns plausible noise with nothing
+	// anywhere reporting it.
+	predLeakShiftComplex = 14
+	predLeakShiftReal    = 16
+
 	// predEscapeFlag marks a body carrying verbatim samples.
 	predEscapeFlag = 1 << 7
 
@@ -153,6 +179,20 @@ func predRoundShift(v int64, shift uint) int64 {
 	m := v >> 63
 	r := (((v ^ m) - m) + 1<<(shift-1)) >> shift
 	return (r ^ m) - m
+}
+
+// predLeak is the amount the leakage removes from one tap: the magnitude
+// divided by 2^shift, truncated towards zero.
+//
+// Truncating rather than rounding is what keeps the leak from fighting the
+// gradient at small taps: below 2^shift it returns zero, so a tap the signal
+// genuinely wants at a small value stays there instead of being pulled to zero
+// and pushed back every sample. Written in the same masked form as
+// predRoundShift, and for the same reason -- an arithmetic shift on a negative
+// value floors rather than truncating, and would not match the server.
+func predLeak(w int64, shift uint) int64 {
+	m := w >> 63
+	return ((((w ^ m) - m) >> shift) ^ m) - m
 }
 
 // predClampTap applies predTapLimit. See the constant for why.
@@ -260,27 +300,27 @@ func (f *complexStage) adapt(er, ei int64) {
 		for j := range wr {
 			hrs := sr[j]
 			his := -si[j]
-			wr[j] += mr*hrs - mi*his
-			wi[j] += mr*his + mi*hrs
+			wr[j] += mr*hrs - mi*his - predLeak(wr[j], predLeakShiftComplex)
+			wi[j] += mr*his + mi*hrs - predLeak(wi[j], predLeakShiftComplex)
 		}
 		return
 	}
 	for j := range wr {
 		hrs := sr[j]
 		his := -si[j]
-		wr[j] = predClampTap(wr[j] + mr*hrs - mi*his)
-		wi[j] = predClampTap(wi[j] + mr*his + mi*hrs)
+		wr[j] = predClampTap(wr[j] + mr*hrs - mi*his - predLeak(wr[j], predLeakShiftComplex))
+		wi[j] = predClampTap(wi[j] + mr*his + mi*hrs - predLeak(wi[j], predLeakShiftComplex))
 	}
 }
 
 // beginPacket decides, once per packet, whether adapt may skip the tap clamp.
 //
 // One complex update moves a tap by at most 2*mu (each of the two sign terms
-// contributes at most mu), so if every tap starts further than 2*mu*steps from
-// the limit, no update in this packet can reach it and the clamp is an
-// identity. The server makes the same decision from the same taps, so the two
-// take the same path -- and the clamped loop produces identical values anyway
-// when it does run.
+// contributes at most mu, and the leak only ever moves a tap towards zero), so
+// if every tap starts further than 2*mu*steps from the limit, no update in this
+// packet can reach it and the clamp is an identity. The server makes the same
+// decision from the same taps, so the two take the same path -- and the clamped
+// loop produces identical values anyway when it does run.
 func (f *complexStage) beginPacket(steps int) {
 	var maxAbs int64
 	for _, w := range f.wr {
@@ -385,12 +425,12 @@ func (f *realStage) adapt(e int64) {
 	s = s[:len(w)]
 	if f.fast {
 		for j, sv := range s {
-			w[j] += m * sv
+			w[j] += m*sv - predLeak(w[j], predLeakShiftReal)
 		}
 		return
 	}
 	for j, sv := range s {
-		w[j] = predClampTap(w[j] + m*sv)
+		w[j] = predClampTap(w[j] + m*sv - predLeak(w[j], predLeakShiftReal))
 	}
 }
 

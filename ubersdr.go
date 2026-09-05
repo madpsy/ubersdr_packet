@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"net"
@@ -25,6 +26,26 @@ import (
 )
 
 const rcvBufSize = 16 * 1024 * 1024 // 16 MiB SO_RCVBUF
+
+// handshakeDetail renders what a refused upgrade said, for appending to a dial
+// error.
+//
+// The server settles the audio protocol version before the upgrade: a version
+// it cannot serve is answered with a 400 whose body names the range it does
+// support, rather than being quietly downgraded to version 1. The dialer
+// reports all of that as "bad handshake", so the one message that says exactly
+// what is wrong would otherwise be the one thing thrown away.
+func handshakeDetail(resp *http.Response) string {
+	if resp == nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+	if msg := strings.TrimSpace(string(body)); msg != "" {
+		return fmt.Sprintf(" (HTTP %d: %s)", resp.StatusCode, msg)
+	}
+	return fmt.Sprintf(" (HTTP %d)", resp.StatusCode)
+}
 
 var wsDialer = &websocket.Dialer{
 	HandshakeTimeout: 10 * time.Second,
@@ -355,9 +376,9 @@ func (inst *instance) runOnce(ctx context.Context) (reconnect bool) {
 
 	hdr := http.Header{}
 	hdr.Set("User-Agent", "ubersdr-packet/1.0")
-	conn, _, err := wsDialer.Dial(wsAddr, hdr)
+	conn, resp, err := wsDialer.Dial(wsAddr, hdr)
 	if err != nil {
-		log.Printf("[%s] websocket dial: %v", inst.label, err)
+		log.Printf("[%s] websocket dial: %v%s", inst.label, err, handshakeDetail(resp))
 		return true
 	}
 	defer conn.Close()
